@@ -1,0 +1,18 @@
+<?php
+# Agregar ruta home al inicio del archivo web.php
+use App\Http\Controllers\HomeController;
+use App\Http\Controllers\EstudianteController;
+use App\Http\Controllers\MaestroController; 
+use App\Http\Controllers\SeccionController; 
+use App\Http\Controllers\AsistenciaController;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/', function () {
+    return view('welcome');
+});
+
+Route::get('/', [HomeController::class, 'index'])->name('home');
+Route::resource('estudiantes', EstudianteController::class);
+Route::resource('maestros', MaestroController::class);
+Route::resource('secciones', SeccionController::class);
+Route::get('asistencia', [AsistenciaController::class, 'index'])->name('asistencia.index');
