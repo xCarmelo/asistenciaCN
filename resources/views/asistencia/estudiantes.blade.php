@@ -40,9 +40,7 @@
                     <input type="date" name="fecha" class="form-control" value="{{ $fecha }}" onchange="this.form.submit()">
                 </div>
                 <div class="col-md-3 d-flex align-items-end">
-                    <a href="{{ route('asistencia.index') }}" class="btn btn-secondary w-100">
-                        <i class="bi bi-arrow-left"></i> Volver a Asistencia
-                    </a>
+                    <a href="{{ route('asistencia.estudiantes.create') }}" class="btn btn-secondary w-100">Limpiar filtros</a>
                 </div>
             </form>
 
@@ -76,19 +74,26 @@
                             </thead>
                             <tbody>
                                 @foreach($estudiantes as $est)
+                                    @php
+                                        $asistenciaExistente = \App\Models\Asistencia::where('fecha', $fecha)
+                                                            ->where('id_estudiante', $est->id)
+                                                            ->where('id_corte', $corteId)
+                                                            ->first();
+                                        $valorAsis = $asistenciaExistente ? $asistenciaExistente->asis : 'P';
+                                    @endphp
                                     <tr data-numero="{{ $est->numero_lista }}" data-nombre="{{ strtolower($est->name) }}">
                                         <td>{{ $loop->iteration }}</td>
                                         <td>{{ $est->numero_lista ?? '-' }}</td>
                                         <td>{{ $est->name }}</td>
                                         <td>
                                             <select name="asistencia[{{ $est->id }}]" class="form-select" style="width: auto; min-width: 130px;">
-                                                <option value="P" selected>Presente</option>
-                                                <option value="A">Ausente</option>
-                                                <option value="J">Justificado</option>
-                                                <option value="T">Llegada tarde</option>
+                                                <option value="P" {{ $valorAsis == 'P' ? 'selected' : '' }}>Presente</option>
+                                                <option value="A" {{ $valorAsis == 'A' ? 'selected' : '' }}>Ausente</option>
+                                                <option value="J" {{ $valorAsis == 'J' ? 'selected' : '' }}>Justificado</option>
+                                                <option value="T" {{ $valorAsis == 'T' ? 'selected' : '' }}>Llegada tarde</option>
                                             </select>
                                         </td>
-                                    </tr>
+                                    </table>
                                 @endforeach
                             </tbody>
                         </table>
@@ -98,7 +103,7 @@
                         <button type="submit" class="btn btn-primary">
                             <i class="bi bi-save"></i> Guardar Asistencia
                         </button>
-                        <a href="{{ route('asistencia.index') }}" class="btn btn-secondary">Cancelar</a>
+                        <a href="{{ route('home') }}" class="btn btn-secondary">Cancelar</a>
                     </div>
                 </form>
             @elseif($seccionId)
@@ -108,43 +113,12 @@
     </div>
 </div>
 
-<!-- Modal de mensajes (igual que antes) -->
-<div class="modal fade" id="mensajeModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header" id="modalHeader">
-                <h5 class="modal-title" id="modalTitulo"></h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="modalMensaje"></div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        @if(session('success_modal'))
-            const modalSuccess = new bootstrap.Modal(document.getElementById('mensajeModal'));
-            document.getElementById('modalTitulo').innerText = '✅ Éxito';
-            document.getElementById('modalMensaje').innerText = '{{ session('success_modal') }}';
-            document.getElementById('modalHeader').classList.add('bg-success', 'text-white');
-            modalSuccess.show();
-        @endif
-        @if(session('error_modal'))
-            const modalError = new bootstrap.Modal(document.getElementById('mensajeModal'));
-            document.getElementById('modalTitulo').innerText = '❌ Error';
-            document.getElementById('modalMensaje').innerText = '{{ session('error_modal') }}';
-            document.getElementById('modalHeader').classList.add('bg-danger', 'text-white');
-            modalError.show();
-        @endif
-
         const inputNombre = document.getElementById('filtro_nombre');
         const inputNumero = document.getElementById('filtro_numero');
         const tabla = document.getElementById('tablaAsistencia');
-        if (tabla && inputNombre && inputNumero) {
+        if (tabla) {
             const filas = tabla.querySelectorAll('tbody tr');
             function filtrar() {
                 const textoNombre = inputNombre.value.toLowerCase();

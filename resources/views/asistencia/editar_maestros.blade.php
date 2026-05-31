@@ -7,8 +7,8 @@
     <h1 class="mt-4">Editar Asistencia - Maestros</h1>
     <ol class="breadcrumb mb-4">
         <li class="breadcrumb-item"><a href="{{ route('home') }}">Inicio</a></li>
-        <li class="breadcrumb-item"><a href="{{ route('asistencia.index') }}">Asistencia</a></li>
-        <li class="breadcrumb-item active">Editar</li>
+        <li class="breadcrumb-item"><a href="{{ route('maestros.asistencias.index') }}">Asistencias Maestros</a></li>
+        <li class="breadcrumb-item active">Editar 
     </ol>
 
     <div class="card mb-4">
@@ -56,9 +56,7 @@
                     <button type="submit" class="btn btn-primary">
                         <i class="bi bi-save"></i> Guardar cambios
                     </button>
-                    <a href="{{ route('asistencia.reporte', $fecha) }}" class="btn btn-secondary">
-                        Cancelar
-                    </a>
+                    
                 </div>
             </form>
         </div>

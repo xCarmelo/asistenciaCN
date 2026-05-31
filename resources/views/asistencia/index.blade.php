@@ -7,9 +7,7 @@
     <div class="d-flex justify-content-between align-items-center mt-4 mb-3">
         <h1 class="h3">Asistencia</h1>
         <div>
-            <a href="{{ route('asistencia.maestros.create') }}" class="btn btn-outline-primary me-2">
-                <i class="bi bi-person-badge"></i> Nueva asistencia / Maestros
-            </a>
+
             <a href="{{ route('asistencia.estudiantes.create') }}" class="btn btn-outline-success">
                 <i class="bi bi-people"></i> Nueva asistencia / Estudiantes
             </a>

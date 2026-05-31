@@ -152,37 +152,54 @@
     </style>
 <style>.total-cell { background-color: #ffffff !important; }</style></head>
 <body>
-    <!-- Sidebar -->
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <img src="{{ asset('images/logo-colegio.jpg') }}" alt="Logo CNSR" onerror="this.src='https://via.placeholder.com/50'">
-            <h5>Colegio CNSR</h5>
-            <small>Control de Asistencia</small>
-        </div>
-        <nav class="mt-3">
-            <a class="nav-link {{ request()->routeIs('home') ? 'active' : '' }}" href="{{ route('home') }}">
-                <i class="bi bi-speedometer2"></i> Inicio
-            </a>
-            <a class="nav-link {{ request()->routeIs('estudiantes.*') ? 'active' : '' }}" href="{{ route('estudiantes.index') }}">
-                <i class="bi bi-people"></i> Estudiantes
-            </a>
-            <a class="nav-link {{ request()->routeIs('maestros.*') ? 'active' : '' }}" href="{{ route('maestros.index') }}">
-                <i class="bi bi-person-badge"></i> Maestros
-            </a>
-            <a class="nav-link {{ request()->routeIs('secciones.*') ? 'active' : '' }}" href="{{ route('secciones.index') }}">
-                <i class="bi bi-grid-3x3-gap-fill"></i> Sección/Grado
-            </a>
-            <a class="nav-link {{ request()->routeIs('asistencia.*') ? 'active' : '' }}" href="{{ route('asistencia.index') }}">
-                <i class="bi bi-calendar-check"></i> Asistencia
-            </a>
-            <a class="nav-link" href="{{ route('reporte-ausencias') }}">
-                <i class="bi bi-file-text"></i> Reporte
-            </a>
-            <a class="nav-link" href="{{ route('backups.index') }}">
-                <i class="bi bi-database-fill-gear"></i> Respaldos
-            </a>
-        </nav>
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <img src="{{ asset('images/logo-colegio.jpg') }}" alt="Logo CNSR" onerror="this.src='https://via.placeholder.com/50'">
+        <h5>Colegio CNSR</h5>
+        <small>Control de Asistencia</small>
     </div>
+    <nav class="mt-3">
+        <!-- Inicio -->
+        <a class="nav-link {{ request()->routeIs('home') ? 'active' : '' }}" href="{{ route('home') }}">
+            <i class="bi bi-speedometer2"></i> Inicio
+        </a>
+        <!-- Estudiantes -->
+        <a class="nav-link {{ request()->routeIs('estudiantes.*') ? 'active' : '' }}" href="{{ route('estudiantes.index') }}">
+            <i class="bi bi-people"></i> Estudiantes
+        </a>
+        <!-- Maestros -->
+        <a class="nav-link {{ request()->routeIs('maestros.*') ? 'active' : '' }}" href="{{ route('maestros.index') }}">
+            <i class="bi bi-person-badge"></i> Maestros
+        </a>
+        <!-- Sección/Grado -->
+        <a class="nav-link {{ request()->routeIs('secciones.*') ? 'active' : '' }}" href="{{ route('secciones.index') }}">
+            <i class="bi bi-grid-3x3-gap-fill"></i> Sección/Grado
+        </a>
+
+        <!-- ========== ASISTENCIA (ACORDEÓN) ========== -->
+        <div class="nav-item">
+            <button class="nav-link menu-toggle" id="asistenciaToggle" type="button">
+                <i class="bi bi-calendar-check"></i>
+                <span>Asistencia</span>
+                <i class="bi bi-chevron-down arrow"></i>
+            </button>
+                <ul class="submenu" id="asistenciaSubmenu">
+                    <li><a class="dropdown-item" href="{{ route('asistencia.index') }}">Estudiantes</a></li>
+                    <li><a class="dropdown-item" href="{{ route('maestros.asistencias.index') }}">Maestros</a></li>
+                </ul>
+        </div>
+
+        <!-- Reporte -->
+        <a class="nav-link" href="{{ route('reporte-ausencias') }}">
+            <i class="bi bi-file-text"></i> Reporte
+        </a>
+        <!-- Respaldos -->
+        <a class="nav-link" href="{{ route('backups.index') }}">
+            <i class="bi bi-database-fill-gear"></i> Respaldos
+        </a>
+    </nav>
+</div>
 
     <!-- Contenido principal -->
     <div class="main-content" id="mainContent">
@@ -223,11 +240,34 @@
                 mainContent.classList.remove('expanded');
             }
         });
+
+        document.addEventListener('DOMContentLoaded', function() {
+    const toggleBtn = document.getElementById('asistenciaToggle');
+    const submenu = document.getElementById('asistenciaSubmenu');
+
+    if (toggleBtn && submenu) {
+        // Función para abrir/cerrar
+        function toggleSubmenu() {
+            const expanded = toggleBtn.getAttribute('aria-expanded') === 'true' ? false : true;
+            toggleBtn.setAttribute('aria-expanded', expanded);
+            if (expanded) {
+                submenu.classList.add('open');
+            } else {
+                submenu.classList.remove('open');
+            }
+        }
+
+        toggleBtn.addEventListener('click', toggleSubmenu);
+
+        // Opcional: cerrar automáticamente al hacer clic fuera? No necesario.
+    }
+});
     </script>
     @stack('scripts')
 </body>
 </html>
 <style>
+
     .card-stats {
         transition: transform 0.2s, box-shadow 0.2s;
         border-radius: 1.25rem;
@@ -246,4 +286,85 @@
         .pagination .page-link i {
             font-size: 1rem;
         }
+
+/* Sidebar - estilos base */
+.sidebar {
+overflow-x: hidden;
+}
+
+.sidebar .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    color: rgba(255, 255, 255, 0.8);
+     
+
+}
+.sidebar .nav-link i:first-child {
+    width: 1.5rem;
+    font-size: 1.2rem;
+}
+.sidebar .nav-link .arrow {
+    margin-left: auto;
+    transition: transform 0.3s ease;
+}
+.sidebar .nav-link.menu-toggle {
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+}
+.sidebar .nav-link.active {
+    background-color: #2c6e9e;
+    color: white;
+}
+.sidebar .nav-link:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+/* Submenú tipo acordeón */
+.sidebar .submenu {
+    list-style: none;
+    padding-left: 2.5rem;  /* indentación */
+    margin: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+}
+.sidebar .submenu li {
+    margin: 0.25rem 0;
+}
+.sidebar .submenu .dropdown-item {
+    display: block;
+    padding: 0.5rem 1rem;
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+}
+.sidebar .submenu .dropdown-item:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+.sidebar .submenu .dropdown-item.active {
+    background-color: #2c6e9e;
+    color: white;
+}
+.sidebar .submenu.open {
+    max-height: 200px; /* suficiente para dos ítems */
+}
+
+/* Rotación de la flecha al abrir */
+.sidebar .menu-toggle .arrow {
+    transform: rotate(0deg);
+}
+.sidebar .menu-toggle.open .arrow {
+    transform: rotate(180deg);
+}
+        
 </style>
