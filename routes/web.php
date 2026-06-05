@@ -11,7 +11,7 @@ use App\Http\Controllers\MaestroAsistenciaController;
 use Illuminate\Support\Facades\Route;
 
 // Home
-Route::get('/', [HomeController::class, 'index'])->name('home');
+Route::get('/', [HomeController::class, 'index'])->name('home'); 
 
 // ======================
 // RUTAS ESPECÍFICAS (ANTES DE LAS RESOURCE)

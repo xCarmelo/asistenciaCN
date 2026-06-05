@@ -7,7 +7,6 @@ return new class extends Migration {
         Schema::create('secciones', function (Blueprint $table) {
             $table->id();
             $table->string('nombre', 50);
-            $table->foreignId('id_maestro_guia')->nullable()->constrained('maestros')->nullOnDelete();
             $table->timestamps();
         });
     }

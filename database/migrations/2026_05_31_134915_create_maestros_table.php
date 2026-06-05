@@ -7,7 +7,7 @@ return new class extends Migration {
         Schema::create('maestros', function (Blueprint $table) {
             $table->id();
             $table->string('name', 100);
-            $table->integer('estado')->nullable();
+            $table->boolean('estado_general')->default(1);
             $table->char('genero', 1)->nullable();
             $table->timestamps();
         });

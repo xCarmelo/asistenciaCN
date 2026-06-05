@@ -10,18 +10,18 @@ class Estudiante extends Model
     use HasFactory;
 
     protected $table = 'estudiantes';
-    protected $fillable = [
-        'name', 'numero_lista', 'genero', 'año',
-        'id_seccion', 'estado'
-    ];
 
-    public function seccion()
+    protected $fillable = ['name', 'genero'];
+
+    public function historiales()
     {
-        return $this->belongsTo(Seccion::class, 'id_seccion');
+        return $this->hasMany(HistorialEstudiante::class, 'estudiante_id');
     }
 
-    public function asistencias()
+    public function historialActivo()
     {
-        return $this->hasMany(Asistencia::class, 'id_estudiante');
+        return $this->hasOne(HistorialEstudiante::class, 'estudiante_id')
+            ->whereNull('fecha_fin')
+            ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true));
     }
 }

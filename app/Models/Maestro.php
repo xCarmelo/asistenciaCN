@@ -10,27 +10,18 @@ class Maestro extends Model
     use HasFactory;
 
     protected $table = 'maestros';
-    protected $fillable = ['name', 'estado', 'genero'];
 
-    // Relación: una sección tutelada (un maestro puede guiar varias secciones, pero la UI permitirá solo una)
-    public function seccionesGuiadas()
+    protected $fillable = ['name', 'estado_general', 'genero'];
+
+    public function historiales()
     {
-        return $this->hasMany(Seccion::class, 'id_maestro_guia');
+        return $this->hasMany(HistorialMaestro::class, 'maestro_id');
     }
 
-    // Método auxiliar para obtener la sección principal (la primera asignada)
-    public function getTuteladoAttribute()
+    public function historialActivo()
     {
-        return $this->seccionesGuiadas->first();
-    }
-
-    public function asistencias()
-    {
-        return $this->hasMany(AsistenciaMaestro::class, 'id_maestro');
-    }
-
-      public function seccionGuiada()
-    {
-        return $this->hasOne(Seccion::class, 'id_maestro_guia');
+        return $this->hasOne(HistorialMaestro::class, 'maestro_id')
+            ->whereNull('fecha_fin')
+            ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true));
     }
 }

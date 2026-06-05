@@ -9,7 +9,7 @@ return new class extends Migration
     public function up()
     {
         Schema::table('secciones', function (Blueprint $table) {
-            $table->boolean('estado')->default(1)->after('id_maestro_guia');
+            $table->boolean('estado')->default(1)->after('nombre');
         });
     }
 

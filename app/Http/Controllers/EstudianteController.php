@@ -4,315 +4,476 @@ namespace App\Http\Controllers;
 
 use App\Models\Estudiante;
 use App\Models\Seccion;
+use App\Models\Estado;
+use App\Models\HistorialEstudiante;
 use App\Imports\EstudiantesImport;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class EstudianteController extends Controller
 {
-    public function index(Request $request)
+     public function index(Request $request)
     {
-        $query = Estudiante::with('seccion')
-            ->join('secciones', 'estudiantes.id_seccion', '=', 'secciones.id')
-            ->orderBy('secciones.nombre')
-            ->orderBy('estudiantes.numero_lista')
-            ->select('estudiantes.*');
+        // Subconsulta para obtener el ID del último historial de cada estudiante
+        $subquery = HistorialEstudiante::select('estudiante_id', DB::raw('MAX(id) as ultimo_id'))
+            ->groupBy('estudiante_id');
 
         if ($request->filled('nombre')) {
-            $query->where('estudiantes.name', 'like', '%' . $request->nombre . '%');
+            $subquery->whereHas('estudiante', fn($q) => $q->where('name', 'like', '%' . $request->nombre . '%'));
         }
         if ($request->filled('seccion_id')) {
-            $query->where('estudiantes.id_seccion', $request->seccion_id);
+            $subquery->where('seccion_id', $request->seccion_id);
         }
+
+        $subquerySql = $subquery->toSql();
+        $bindings = $subquery->getBindings();
+
+        $query = HistorialEstudiante::with(['estudiante', 'seccion', 'estado'])
+            ->join(DB::raw("({$subquerySql}) as ultimos"), function($join) {
+                $join->on('historial_estudiantes.id', '=', 'ultimos.ultimo_id');
+            })
+            ->setBindings($bindings, 'join');
+
         if ($request->filled('estado')) {
-            $query->where('estudiantes.estado', $request->estado);
+            $query->where('historial_estudiantes.estado_id', $request->estado);
         } else {
-            $query->where('estudiantes.estado', 'Activo');
+            // Sin filtro: solo activos (fecha_fin NULL y estado permite asistencia)
+            $query->whereNull('historial_estudiantes.fecha_fin')
+                  ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true));
         }
 
-        $estudiantes = $query->paginate(15)->appends($request->query());
+        $historiales = $query
+            ->join('secciones', 'historial_estudiantes.seccion_id', '=', 'secciones.id')
+            ->select('historial_estudiantes.*')
+            ->orderBy('secciones.nombre', 'asc')
+            ->orderBy('historial_estudiantes.numero_lista', 'asc')
+            ->orderBy('historial_estudiantes.id', 'asc')
+            ->paginate(15);
+
         $secciones = Seccion::orderBy('nombre')->get();
+        $estados = Estado::all();
 
-        return view('estudiantes.index', compact('estudiantes', 'secciones'));
+        return view('estudiantes.index', compact('historiales', 'secciones', 'estados'));
     }
 
-/**
- * Store a newly created student in storage.
- */
-
-public function store(Request $request)
-{
-    $request->validate([
-        'name'          => 'required|string|max:100',
-        'numero_lista'  => 'required|integer',
-        'genero'        => 'required|in:M,F',
-        'año'           => 'nullable|integer',
-            'id_seccion'    => 'required|exists:secciones,id',
-    ]);
-
-    try {
-        DB::transaction(function () use ($request) {
-            $año = $request->año ?? date('Y');
-            $estudiante = Estudiante::create([
-                'name'          => $request->name,
-                'numero_lista'  => $request->numero_lista,
-                'genero'        => $request->genero,
-                'año'           => $año,
-                'id_seccion'    => $request->id_seccion,
-                'estado'        => 'Activo',
-            ]);
-
-            // Reordenar usando la nueva función con los datos del conflicto
-            if ($estudiante->id_seccion) {
-                $this->renumberActiveStudents(
-                    $estudiante->id_seccion,
-                    $estudiante->id,
-                    $request->numero_lista
-                );
-            }
-        });
-
-        return redirect()->route('estudiantes.index', request()->query())
-            ->with('success', 'Estudiante creado exitosamente.');
-    } catch (\Exception $e) {
-        Log::error('Error al crear estudiante: ' . $e->getMessage());
-        return redirect()->back()->with('error', 'Error al crear el estudiante.')->withInput();
+    public function create()
+    {
+        $secciones = Seccion::orderBy('nombre')->get();
+        return view('estudiantes.create', compact('secciones'));
     }
-}
 
-    public function update(Request $request, Estudiante $estudiante)
+        public function show($id)
+        {
+            $historial = HistorialEstudiante::with(['estudiante', 'seccion', 'estado'])
+                ->where('estudiante_id', $id)
+                ->whereNull('fecha_fin')
+                ->firstOrFail();
+            return view('estudiantes.show', compact('historial'));
+        }
+
+        public function edit($id)
+        {
+            $estudiante = Estudiante::findOrFail($id);
+            $historialActual = HistorialEstudiante::where('estudiante_id', $id)
+                ->latest('id')
+                ->firstOrFail();
+            $secciones = Seccion::orderBy('nombre')->get();
+            $estados = Estado::all();
+            return view('estudiantes.edit', compact('estudiante', 'historialActual', 'secciones', 'estados'));
+        }
+
+    /**
+     * Guardar un nuevo estudiante (primer historial).
+     */
+    public function store(Request $request)
     {
         $request->validate([
-            'id_seccion'    => 'required|exists:secciones,id',
-            'numero_lista'  => 'required|integer|min:1',
-            'name'          => 'required|string',
-            'genero'        => 'required|string',
-            'estado'        => 'required|string',
+            'name'         => 'required|string|max:100',
+            'genero'       => 'required|in:M,F',
+            'id_seccion'   => 'required|exists:secciones,id',
+            'numero_lista' => 'required|integer|min:1',
         ]);
 
         DB::beginTransaction();
         try {
-            $oldSeccion = $estudiante->id_seccion;
-            $oldNumero = $estudiante->numero_lista;
-            $oldEstado = $estudiante->estado;
-            $newSeccion = $request->id_seccion;
-            $newNumero = $request->numero_lista;
-            $newEstado = $request->estado;
+            $estudiante = Estudiante::create([
+                'name'   => $request->name,
+                'genero' => $request->genero,
+            ]);
 
-            // Si cambia de sección o de inactivo a activo, liberar número anterior y reordenar
-            if ($oldEstado === 'Activo' && ($oldSeccion != $newSeccion || $newEstado !== 'Activo')) {
-                $estudiante->update($request->all());
-                $this->renumberActiveStudents($oldSeccion);
+            $estadoActivo = Estado::where('nombre', 'Activo')->first();
+            if (!$estadoActivo) {
+                throw new \Exception('No se encuentra el estado Activo');
             }
 
-            // Si pasa a activo o cambia de sección/número
-            if ($newEstado === 'Activo') {
-                // Si cambia de sección, desplazar en la nueva sección
-                if ($oldSeccion != $newSeccion) {
-                    Estudiante::where('id_seccion', $newSeccion)
-                        ->where('estado', 'Activo')
-                        ->where('numero_lista', '>=', $newNumero)
-                        ->increment('numero_lista');
-                } else if ($oldNumero != $newNumero) {
-                    // Si cambia de número en la misma sección
-                    Estudiante::where('id_seccion', $newSeccion)
-                        ->where('estado', 'Activo')
-                        ->where('numero_lista', '>=', $newNumero)
-                        ->where('id', '!=', $estudiante->id)
-                        ->increment('numero_lista');
-                }
-                $estudiante->update($request->all());
-                $this->renumberActiveStudents($newSeccion);
-            } else {
-                $estudiante->update($request->all());
-            }
+            // Hacer espacio para el número deseado en la sección
+            $this->shiftNumbersForInsert($request->id_seccion, $request->numero_lista, null);
+
+            // Crear historial inicial
+            HistorialEstudiante::create([
+                'estudiante_id' => $estudiante->id,
+                'seccion_id'    => $request->id_seccion,
+                'estado_id'     => $estadoActivo->id,
+                'numero_lista'  => $request->numero_lista,
+                'fecha_inicio'  => Carbon::now()->toDateString(),
+                'fecha_fin'     => null,
+            ]);
 
             DB::commit();
-            return redirect()->route('estudiantes.index', request()->query())->with('success', 'Estudiante actualizado correctamente.');
+            return redirect()->route('estudiantes.index')->with('success', 'Estudiante creado correctamente.');
         } catch (\Exception $e) {
             DB::rollBack();
-            return redirect()->back()->with('error', 'Error al actualizar: ' . $e->getMessage());
+            Log::error('Error al crear estudiante: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error al crear: ' . $e->getMessage())->withInput();
         }
     }
 
-public function destroy(Estudiante $estudiante)
-{
-    try {
-        $seccionId = $estudiante->id_seccion;
-        $estudiante->estado = 'Inactivo';
-        $estudiante->save();
+    /**
+     * Actualizar estudiante (nombre, género, número o sección).
+     */
+    public function update(Request $request, $id)
+    {
+        $request->validate([
+            'name'         => 'required|string|max:100',
+            'genero'       => 'required|in:M,F',
+            'id_seccion'   => 'required|exists:secciones,id',
+            'numero_lista' => 'required|integer|min:1',
+        ]);
 
-        // Reordenar los números de lista de los estudiantes activos de esa sección
-        if ($seccionId) {
-            $this->renumberActiveStudents($seccionId);
+        DB::beginTransaction();
+
+        try {
+            $estudiante = Estudiante::findOrFail($id);
+            $estudiante->update([
+                'name'   => $request->name,
+                'genero' => $request->genero,
+            ]);
+
+            $historialActivo = HistorialEstudiante::where('estudiante_id', $id)
+                ->whereNull('fecha_fin')
+                ->first();
+
+            if (!$historialActivo) {
+                DB::commit();
+                return redirect()
+                    ->route('estudiantes.index')
+                    ->with('warning', 'Solo se actualizó nombre y género. El estudiante no está activo.');
+            }
+
+            $seccionActual = $historialActivo->seccion_id;
+            $nuevaSeccion = (int) $request->id_seccion;
+            $nuevoNumero  = (int) $request->numero_lista;
+
+            // CASO 1: Cambio de sección → cerrar historial actual y crear uno nuevo (con desplazamiento en nueva sección)
+            if ($seccionActual != $nuevaSeccion) {
+                // Cerrar historial actual
+                $historialActivo->update(['fecha_fin' => now()->toDateString()]);
+                $this->rebuildListNumbers($seccionActual); // reordenar sección antigua (eliminar hueco)
+
+                // Hacer espacio en la nueva sección para el número deseado
+                $this->shiftNumbersForInsert($nuevaSeccion, $nuevoNumero, null);
+
+                // Crear nuevo historial en la nueva sección
+                HistorialEstudiante::create([
+                    'estudiante_id' => $estudiante->id,
+                    'seccion_id'    => $nuevaSeccion,
+                    'estado_id'     => $historialActivo->estado_id,
+                    'numero_lista'  => $nuevoNumero,
+                    'fecha_inicio'  => now()->toDateString(),
+                    'fecha_fin'     => null,
+                ]);
+            }
+            // CASO 2: Misma sección, pero cambia el número de lista
+            elseif ($historialActivo->numero_lista != $nuevoNumero) {
+                // Hacer espacio para el nuevo número, excluyendo al propio estudiante
+                $this->shiftNumbersForInsert($seccionActual, $nuevoNumero, $historialActivo->id);
+                // Actualizar el número en el historial activo
+                $historialActivo->update(['numero_lista' => $nuevoNumero]);
+            }
+            // CASO 3: Misma sección, mismo número → solo se actualizaron nombre/género
+
+            DB::commit();
+            return redirect()
+                ->route('estudiantes.index')
+                ->with('success', 'Estudiante actualizado correctamente.');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error($e->getMessage());
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('error', 'Error al actualizar: ' . $e->getMessage());
         }
-
-        return redirect()->route('estudiantes.index', request()->query())
-            ->with('success', 'Estudiante eliminado correctamente.');
-    } catch (\Exception $e) {
-        // ...
     }
-}
 
-    public function reactivar(Estudiante $estudiante)
+    /**
+     * Desactivar estudiante (cambio de estado). Solo cierra historial y reordena.
+     */
+    public function destroy($id, Request $request)
     {
         DB::beginTransaction();
         try {
-            $seccionId = $estudiante->id_seccion;
-            $numero = $estudiante->numero_lista ?? 1;
-            // Si el número está ocupado, desplazar
-            if (Estudiante::where('id_seccion', $seccionId)->where('estado', 'Activo')->where('numero_lista', '>=', $numero)->exists()) {
-                Estudiante::where('id_seccion', $seccionId)
-                    ->where('estado', 'Activo')
-                    ->where('numero_lista', '>=', $numero)
-                    ->increment('numero_lista');
+            $historialActivo = HistorialEstudiante::where('estudiante_id', $id)
+                ->whereNull('fecha_fin')
+                ->first();
+
+            if (!$historialActivo) {
+                return redirect()->back()->with('error', 'El estudiante no tiene un historial activo.');
             }
-            // Si no tenía número, asignar el siguiente disponible
-            if (!$estudiante->numero_lista) {
-                $max = Estudiante::where('id_seccion', $seccionId)->where('estado', 'Activo')->max('numero_lista');
-                $estudiante->numero_lista = $max ? $max + 1 : 1;
+
+            $estadoId = $request->input('estado_id');
+            if (!$estadoId) {
+                return redirect()->back()->with('error', 'Debe seleccionar un motivo de desactivación.');
             }
-            $estudiante->estado = 'Activo';
-            $estudiante->save();
-            $this->renumberActiveStudents($seccionId);
+
+            $estado = Estado::where('id', $estadoId)->where('permite_asistencia', false)->first();
+            if (!$estado) {
+                return redirect()->back()->with('error', 'El estado seleccionado no es válido para desactivación.');
+            }
+
+            $seccionId = $historialActivo->seccion_id;
+            $historialActivo->update([
+                'estado_id' => $estado->id,
+                'fecha_fin' => Carbon::now()->toDateString(),
+            ]);
+
+            $this->rebuildListNumbers($seccionId); // reordenar para eliminar hueco
+
             DB::commit();
-            return redirect()->route('estudiantes.index', request()->query())->with('success', 'Estudiante reactivado correctamente.');
+            return redirect()->route('estudiantes.index')->with('success', "Estudiante marcado como {$estado->nombre} correctamente.");
         } catch (\Exception $e) {
             DB::rollBack();
-            return redirect()->back()->with('error', 'Error al reactivar: ' . $e->getMessage());
+            Log::error('Error al desactivar estudiante: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error al desactivar: ' . $e->getMessage());
         }
     }
 
-public function import(Request $request)
+    /**
+     * Reactivar / cambiar estado (a uno que permita o no asistencia).
+     * Al reactivar a un estado que permite asistencia, se debe asignar un número de lista.
+     */
+/**
+ * Reactivar / cambiar estado (a uno que permita o no asistencia).
+ * Al reactivar a un estado que permite asistencia, se reutiliza el número de lista
+ * del último historial activo que tuvo el estudiante.
+ */
+public function reactivar($id, Request $request)
 {
     $request->validate([
-        'archivo' => 'required|mimes:xlsx,xls,csv'
+        'estado_id' => 'required|exists:estados,id',
     ]);
 
+    DB::beginTransaction();
     try {
-        $archivo = $request->file('archivo');
-        $data = Excel::toArray([], $archivo);
-        $rows = $data[0] ?? [];
+        $estudiante = Estudiante::findOrFail($id);
+        $nuevoEstado = Estado::findOrFail($request->estado_id);
 
-        if (empty($rows)) {
-            return redirect()->back()->with('error', 'El archivo está vacío.');
+        if ($nuevoEstado->nombre == 'Inactivo') {
+            return redirect()->back()->with('error', 'No se puede cambiar al estado Inactivo desde este modal.');
         }
 
-        $headers = array_shift($rows); // Primera fila como cabeceras
-        $indices = [];
-        foreach ($headers as $i => $header) {
-            $normalized = strtolower(trim($header));
-            if ($normalized === 'nombre') $indices['nombre'] = $i;
-            elseif ($normalized === 'seccion') $indices['seccion'] = $i;
-            elseif ($normalized === 'numero_lista') $indices['numero_lista'] = $i;
-            elseif ($normalized === 'genero') $indices['genero'] = $i;
-            elseif ($normalized === 'año') $indices['año'] = $i;
+        // Obtener el último historial del estudiante (el más reciente, activo o inactivo)
+        $ultimoHistorial = HistorialEstudiante::where('estudiante_id', $id)
+            ->orderBy('id', 'desc')
+            ->first();
+        if (!$ultimoHistorial) {
+            return redirect()->back()->with('error', 'No se encontró un historial previo.');
         }
 
-        $required = ['nombre', 'seccion', 'numero_lista', 'genero'];
-        foreach ($required as $req) {
-            if (!isset($indices[$req])) {
-                return redirect()->back()->with('error', "La columna '{$req}' es obligatoria en el archivo.");
+        // Cerrar el historial actual si existe (por si el estudiante estaba en un estado inactivo pero con fecha_fin NULL)
+        $historialActual = HistorialEstudiante::where('estudiante_id', $id)
+            ->whereNull('fecha_fin')
+            ->first();
+        if ($historialActual) {
+            $historialActual->update(['fecha_fin' => Carbon::now()->toDateString()]);
+            // Si el estado actual permitía asistencia, reordenar su sección (eliminar su hueco)
+            if ($historialActual->estado->permite_asistencia) {
+                $this->rebuildListNumbers($historialActual->seccion_id);
             }
         }
 
-        DB::transaction(function () use ($rows, $indices) {
+        // Preparar los datos para el nuevo historial
+        $nuevaSeccion = $ultimoHistorial->seccion_id;
+        $nuevoNumero = $ultimoHistorial->numero_lista;
+
+        // Si el nuevo estado permite asistencia, hacer espacio para el número en la sección
+        if ($nuevoEstado->permite_asistencia) {
+            // Desplazar los números >= $nuevoNumero para hacer espacio
+            // No excluimos ningún historial porque el estudiante aún no tiene historial activo en esta sección
+            $this->shiftNumbersForInsert($nuevaSeccion, $nuevoNumero, null);
+        }
+
+        // Crear el nuevo historial
+        HistorialEstudiante::create([
+            'estudiante_id' => $estudiante->id,
+            'seccion_id'    => $nuevaSeccion,
+            'estado_id'     => $nuevoEstado->id,
+            'numero_lista'  => $nuevoNumero,
+            'fecha_inicio'  => Carbon::now()->toDateString(),
+            'fecha_fin'     => null,
+        ]);
+
+        DB::commit();
+        return redirect()->route('estudiantes.index')->with('success', "Estudiante cambiado a estado {$nuevoEstado->nombre} correctamente.");
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error('Error al cambiar estado: ' . $e->getMessage());
+        return redirect()->back()->with('error', 'Error al cambiar estado: ' . $e->getMessage());
+    }
+}
+    /**
+     * Importar estudiantes desde Excel.
+     * Se espera que el importador devuelva las secciones afectadas y, por cada fila,
+     * se debe hacer desplazamiento antes de insertar el historial.
+     * Para simplificar, se puede modificar el Import para que haga el desplazamiento,
+     * o hacerlo aquí tras recoger todos los datos. Como el importador actual no tiene esa lógica,
+     * sugiero reescribir la importación en el controlador mismo para controlar el desplazamiento.
+     * Por simplicidad, mantendré la llamada al import y luego reordenaré todo, pero eso no respeta
+     * los números deseados. El usuario pide que se respete, así que reemplazaré el método import.
+     */
+    public function import(Request $request)
+    {
+        $request->validate([
+            'archivo' => 'required|mimes:xlsx,xls,csv'
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $data = Excel::toArray([], $request->file('archivo'));
+            $rows = $data[0] ?? [];
+            if (empty($rows)) {
+                throw new \Exception('El archivo está vacío.');
+            }
+
+            $headers = array_shift($rows);
+            $indices = [];
+            foreach ($headers as $i => $header) {
+                $normalized = strtolower(trim($header));
+                if ($normalized === 'nombre') $indices['nombre'] = $i;
+                elseif ($normalized === 'seccion') $indices['seccion'] = $i;
+                elseif ($normalized === 'numero_lista') $indices['numero_lista'] = $i;
+                elseif ($normalized === 'genero') $indices['genero'] = $i;
+            }
+            $required = ['nombre', 'seccion', 'numero_lista', 'genero'];
+            foreach ($required as $req) {
+                if (!isset($indices[$req])) {
+                    throw new \Exception("La columna '{$req}' es obligatoria.");
+                }
+            }
+
+            $estadoActivo = Estado::where('nombre', 'Activo')->first();
+            if (!$estadoActivo) {
+                throw new \Exception('Estado Activo no encontrado');
+            }
+
             foreach ($rows as $rowIndex => $row) {
                 $nombre = trim($row[$indices['nombre']] ?? '');
                 $seccionNombre = trim($row[$indices['seccion']] ?? '');
-                $numeroLista = $row[$indices['numero_lista']] ?? null;
+                $numeroLista = (int)($row[$indices['numero_lista']] ?? 0);
                 $genero = strtoupper(trim($row[$indices['genero']] ?? ''));
-                
-                // Año: si la columna existe y tiene valor, usarlo; si no, año actual
-                if (isset($indices['año']) && !empty($row[$indices['año']])) {
-                    $año = $row[$indices['año']];
-                } else {
-                    $año = date('Y');
-                }
 
-                if (empty($nombre) || empty($seccionNombre) || empty($numeroLista) || empty($genero)) {
-                    throw new \Exception("Fila " . ($rowIndex + 2) . ": Faltan campos obligatorios (nombre, sección, número lista, género).");
+                if (empty($nombre) || empty($seccionNombre) || $numeroLista <= 0 || empty($genero)) {
+                    throw new \Exception("Fila " . ($rowIndex + 2) . ": Datos incompletos.");
                 }
-
                 if (!in_array($genero, ['M', 'F'])) {
-                    throw new \Exception("Fila " . ($rowIndex + 2) . ": Género debe ser M o F.");
+                    throw new \Exception("Fila " . ($rowIndex + 2) . ": Género inválido.");
                 }
 
                 $seccion = Seccion::where('nombre', $seccionNombre)->first();
                 if (!$seccion) {
-                    throw new \Exception("Fila " . ($rowIndex + 2) . ": La sección '{$seccionNombre}' no existe.");
+                    throw new \Exception("Fila " . ($rowIndex + 2) . ": Sección '{$seccionNombre}' no existe.");
                 }
 
-                // Crear el estudiante (activo)
-                $estudiante = Estudiante::create([
-                    'name'          => $nombre,
+                // Crear o recuperar estudiante (por nombre, evitar duplicados exactos)
+                $estudiante = Estudiante::firstOrCreate(
+                    ['name' => $nombre],
+                    ['genero' => $genero]
+                );
+                if (empty($estudiante->genero)) {
+                    $estudiante->genero = $genero;
+                    $estudiante->save();
+                }
+
+                // Cerrar historial activo actual si existe y está en diferente sección/estado? Para importación,
+                // asumimos que cada fila es un nuevo estudiante o una reactivación. Para simplificar,
+                // cerramos cualquier historial activo del estudiante (si existe) y creamos uno nuevo.
+                $historialActivo = HistorialEstudiante::where('estudiante_id', $estudiante->id)
+                    ->whereNull('fecha_fin')
+                    ->first();
+                if ($historialActivo) {
+                    $historialActivo->update(['fecha_fin' => Carbon::now()->toDateString()]);
+                    $this->rebuildListNumbers($historialActivo->seccion_id);
+                }
+
+                // Hacer espacio para el número deseado en la sección
+                $this->shiftNumbersForInsert($seccion->id, $numeroLista, null);
+
+                // Crear nuevo historial activo
+                HistorialEstudiante::create([
+                    'estudiante_id' => $estudiante->id,
+                    'seccion_id'    => $seccion->id,
+                    'estado_id'     => $estadoActivo->id,
                     'numero_lista'  => $numeroLista,
-                    'genero'        => $genero,
-                    'año'           => $año,
-                    'id_seccion'    => $seccion->id,
-                    'estado'        => 'Activo',
+                    'fecha_inicio'  => Carbon::now()->toDateString(),
+                    'fecha_fin'     => null,
                 ]);
-
-                // Reordenar números de lista en esa sección (con conflicto)
-                $this->renumberActiveStudents($seccion->id, $estudiante->id, $numeroLista);
             }
-        });
 
-        return redirect()->route('estudiantes.index', request()->query())
-            ->with('success', 'Estudiantes importados correctamente.');
-    } catch (\Exception $e) {
-        Log::error('Error al importar: ' . $e->getMessage());
-        return redirect()->back()->with('error', 'Error al importar: ' . $e->getMessage());
-    }
-}
-
-/**
- * Reordena los números de lista de estudiantes ACTIVOS en una sección,
- * respetando la prioridad del estudiante recién insertado/modificado.
- * Primero desplaza números si hay conflicto, luego asigna correlativos.
- *
- * @param int $seccionId
- * @param int|null $estudianteId ID del estudiante que se acaba de guardar (opcional)
- * @param int|null $nuevoNumero Número que se intentó asignar (opcional)
- */
-private function renumberActiveStudents($seccionId, $estudianteId = null, $nuevoNumero = null)
-{
-    if (!$seccionId) return;
-
-    // 1. Resolución de conflictos (si se crea/edita/reactiva un estudiante con un número ya existente)
-    if ($estudianteId && $nuevoNumero !== null) {
-        $conflicto = Estudiante::where('id_seccion', $seccionId)
-            ->where('estado', 'Activo')
-            ->where('numero_lista', $nuevoNumero)
-            ->where('id', '!=', $estudianteId)
-            ->exists();
-
-        if ($conflicto) {
-            // Incrementar en 1 los números >= $nuevoNumero (excluyendo al estudiante actual)
-            Estudiante::where('id_seccion', $seccionId)
-                ->where('estado', 'Activo')
-                ->where('numero_lista', '>=', $nuevoNumero)
-                ->where('id', '!=', $estudianteId)
-                ->increment('numero_lista');
+            DB::commit();
+            return redirect()->route('estudiantes.index')->with('success', 'Estudiantes importados correctamente.');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error al importar: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error al importar: ' . $e->getMessage());
         }
     }
 
-    // 2. Reasignación correlativa final (1,2,3...)
-    $estudiantes = Estudiante::where('id_seccion', $seccionId)
-        ->where('estado', 'Activo')
-        ->orderBy('numero_lista', 'asc')
-        ->orderBy('id', 'asc')
-        ->get();
+    /**
+     * Desplaza hacia arriba los números de lista en una sección para hacer espacio
+     * para un nuevo número deseado, excluyendo opcionalmente un historial (para ediciones).
+     * Incrementa en 1 todos los números >= $numeroDeseado que no sean el excluido.
+     */
+    private function shiftNumbersForInsert($seccionId, $numeroDeseado, $excluirHistorialId = null)
+    {
+        if (!$seccionId || $numeroDeseado <= 0) return;
 
-    $numero = 1;
-    foreach ($estudiantes as $est) {
-        if ($est->numero_lista != $numero) {
-            $est->numero_lista = $numero;
-            $est->save();
+        $query = HistorialEstudiante::where('seccion_id', $seccionId)
+            ->whereNull('fecha_fin')
+            ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true))
+            ->where('numero_lista', '>=', $numeroDeseado);
+
+        if ($excluirHistorialId) {
+            $query->where('id', '!=', $excluirHistorialId);
         }
-        $numero++;
+
+        $query->increment('numero_lista');
     }
-}
+
+    /**
+     * Reconstruye números de lista de estudiantes ACTIVOS en una sección (1,2,3...).
+     * Solo usado cuando se elimina un estudiante o se cambia de sección (para llenar huecos).
+     */
+    private function rebuildListNumbers($seccionId)
+    {
+        if (!$seccionId) return;
+
+        $historiales = HistorialEstudiante::where('seccion_id', $seccionId)
+            ->whereNull('fecha_fin')
+            ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true))
+            ->orderBy('numero_lista')
+            ->orderBy('id')
+            ->get();
+
+        $numero = 1;
+        foreach ($historiales as $historial) {
+            if ($historial->numero_lista != $numero) {
+                $historial->update(['numero_lista' => $numero]);
+            }
+            $numero++;
+        }
+    }
 }

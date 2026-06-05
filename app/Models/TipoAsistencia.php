@@ -10,5 +10,20 @@ class TipoAsistencia extends Model
     use HasFactory;
 
     protected $table = 'tipos_asistencia';
+
     protected $fillable = ['codigo', 'nombre', 'es_presente'];
+
+    protected $casts = [
+        'es_presente' => 'boolean',
+    ];
+
+    public function asistenciasEstudiantes()
+    {
+        return $this->hasMany(AsistenciaEstudiante::class, 'id_tipo_asistencia');
+    }
+
+    public function asistenciasMaestros()
+    {
+        return $this->hasMany(AsistenciaMaestroHistorica::class, 'id_tipo_asistencia');
+    }
 }

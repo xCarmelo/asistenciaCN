@@ -34,20 +34,20 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach($estudiantes as $est)
-                                <tr>
-                                    <td>{{ $loop->iteration }}</td>
-                                    <td>{{ $est->numero_lista ?? '-' }}</td>
-                                    <td>{{ $est->name }}</td>
-                                    <td>
-                                        <select name="asistencia[{{ $est->id }}]" class="form-select" style="width: auto; min-width: 130px;">
-                                            <option value="P" {{ $est->asistencia_actual == 'P' ? 'selected' : '' }}>Presente</option>
-                                            <option value="A" {{ $est->asistencia_actual == 'A' ? 'selected' : '' }}>Ausente</option>
-                                            <option value="J" {{ $est->asistencia_actual == 'J' ? 'selected' : '' }}>Justificado</option>
-                                            <option value="T" {{ $est->asistencia_actual == 'T' ? 'selected' : '' }}>Llegada tarde</option>
-                                        </select>
-                                    </td>
-                                </tr>
+                            @foreach($historiales as $historial)
+                            <tr>
+                                <td>{{ $loop->iteration }}</td>
+                                <td>{{ $historial->numero_lista ?? '-' }}</td>
+                                <td>{{ $historial->estudiante->name }}</td>
+                                <td>
+                                    <select name="asistencia[{{ $historial->estudiante_id }}]" class="form-select" style="width: auto; min-width: 130px;">
+                                        <option value="P" {{ $historial->asistencia_actual == 'P' ? 'selected' : '' }}>Presente</option>
+                                        <option value="A" {{ $historial->asistencia_actual == 'A' ? 'selected' : '' }}>Ausente</option>
+                                        <option value="J" {{ $historial->asistencia_actual == 'J' ? 'selected' : '' }}>Justificado</option>
+                                        <option value="T" {{ $historial->asistencia_actual == 'T' ? 'selected' : '' }}>Llegada tarde</option>
+                                    </select>
+                                </td>
+                            </tr>
                             @endforeach
                         </tbody>
                     </table>

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Seccion;
 use App\Models\Maestro;
+use App\Models\HistorialMaestro;
 use App\Imports\SeccionesImport;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Http\Request;
@@ -12,77 +13,80 @@ use Illuminate\Support\Facades\Log;
 
 class SeccionController extends Controller
 {
-    public function index(Request $request)
-    {
-        $query = Seccion::with('maestroGuia')->orderBy('nombre');
+public function index(Request $request)
+{
+    $query = Seccion::query();
 
-        if ($request->filled('nombre')) {
-            $query->where('nombre', 'like', '%' . $request->nombre . '%');
-        }
-        if ($request->filled('estado')) {
-            $query->where('estado', $request->estado);
-        }
-
-        $secciones = $query->paginate(15)->appends($request->query());
-
-        // Maestros libres (sin ninguna sección activa asignada)
-        $maestrosLibres = Maestro::where('estado', 1)
-            ->whereDoesntHave('seccionesGuiadas', function($q) {
-                $q->where('estado', 1);
-            })
-            ->orderBy('name')
-            ->get();
-
-        $occupiedMaestroIds = Seccion::where('estado', 1)
-            ->whereNotNull('id_maestro_guia')
-            ->pluck('id_maestro_guia')
-            ->toArray();
-
-        $todosMaestros = Maestro::where('estado', 1)->orderBy('name')->get();
-
-        return view('secciones.index', compact('secciones', 'maestrosLibres', 'todosMaestros', 'occupiedMaestroIds'));
+    if ($request->filled('nombre')) {
+        $query->where('nombre', 'like', '%' . $request->nombre . '%');
     }
 
-    public function store(Request $request)
-    {
-        $request->validate([
-            'nombre'          => 'required|string|max:50',
-            'id_maestro_guia' => 'nullable|exists:maestros,id',
+    // Filtro por estado: podrías considerar activa si tiene algún estudiante activo
+    if ($request->filled('estado')) {
+        // Aquí la lógica depende de lo que consideres "activo"
+        // Por ejemplo: sección activa si tiene al menos un historial_estudiante activo
+        if ($request->estado == 1) {
+            $query->whereHas('historialEstudiantes', fn($q) => $q->whereNull('fecha_fin')->whereHas('estado', fn($e) => $e->where('permite_asistencia', true)));
+        } else {
+            $query->whereDoesntHave('historialEstudiantes', fn($q) => $q->whereNull('fecha_fin')->whereHas('estado', fn($e) => $e->where('permite_asistencia', true)));
+        }
+    }
+
+    $secciones = $query->with(['maestroActual' => fn($q) => $q->with('maestro')])
+        ->paginate(15)
+        ->appends($request->query());
+
+    // Maestros libres (sin historial activo)
+    $maestrosLibres = Maestro::whereDoesntHave('historialActivo')
+        ->orderBy('name')
+        ->get();
+
+    // Para el modal de edición necesitas todos los maestros y los IDs ocupados
+    $todosMaestros = Maestro::orderBy('name')->get();
+    $occupiedMaestroIds = HistorialMaestro::whereNull('fecha_fin')
+        ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true))
+        ->pluck('maestro_id')
+        ->toArray();
+
+    return view('secciones.index', compact('secciones', 'maestrosLibres', 'todosMaestros', 'occupiedMaestroIds'));
+}
+
+public function store(Request $request)
+{
+    $request->validate([
+        'nombre' => 'required|string|max:50|unique:secciones,nombre', // validación simple
+    ]);
+
+    // Crear la sección (sin estado ni maestro asignado directamente)
+    $seccion = Seccion::create(['nombre' => $request->nombre]);
+
+    // Si además deseas asignar un maestro a la sección al crearla (opcional)
+    if ($request->filled('id_maestro_guia')) {
+        $maestroId = $request->id_maestro_guia;
+        // Verificar que el maestro no tenga ya un historial activo en otra sección
+        $tieneHistorialActivo = HistorialMaestro::where('maestro_id', $maestroId)
+            ->whereNull('fecha_fin')
+            ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true))
+            ->exists();
+
+        if ($tieneHistorialActivo) {
+            // Opcional: eliminar la sección recién creada o manejarlo
+            $seccion->delete();
+            return redirect()->back()->with('error', 'El maestro ya tiene una sección activa asignada.')->withInput();
+        }
+
+        // Crear historial activo para el maestro en esta sección
+        HistorialMaestro::create([
+            'maestro_id' => $maestroId,
+            'seccion_id' => $seccion->id,
+            'estado_id' => Estado::where('nombre', 'Activo')->first()->id, // asumiendo que existe 'Activo' con permite_asistencia=1
+            'fecha_inicio' => now()->toDateString(),
+            'fecha_fin' => null,
         ]);
-
-        if ($request->filled('id_maestro_guia')) {
-            $maestroOcupado = Seccion::where('estado', 1)
-                ->where('id_maestro_guia', $request->id_maestro_guia)
-                ->exists();
-            if ($maestroOcupado) {
-                return redirect()->back()->with('error', 'El maestro seleccionado ya está asignado a otra sección activa.')->withInput();
-            }
-        }
-
-        $existenteActiva = Seccion::where('nombre', $request->nombre)->where('estado', 1)->first();
-        if ($existenteActiva) {
-            return redirect()->back()->with('error', 'Ya existe una sección activa con el nombre "' . $request->nombre . '".')->withInput();
-        }
-
-        $existenteInactiva = Seccion::where('nombre', $request->nombre)->where('estado', 0)->first();
-        if ($existenteInactiva) {
-            return redirect()->back()->with('warning', 'La sección "' . $request->nombre . '" ya existe pero está desactivada. ¿Desea reactivarla?')
-                ->with('reactivar_id', $existenteInactiva->id)
-                ->withInput();
-        }
-
-        try {
-            Seccion::create([
-                'nombre'          => $request->nombre,
-                'id_maestro_guia' => $request->id_maestro_guia,
-                'estado'          => 1,
-            ]);
-            return redirect()->route('secciones.index', request()->query())->with('success', 'Sección creada exitosamente.');
-        } catch (\Exception $e) {
-            Log::error('Error al crear sección: ' . $e->getMessage());
-            return redirect()->back()->with('error', 'Error al crear la sección.')->withInput();
-        }
     }
+
+    return redirect()->route('secciones.index')->with('success', 'Sección creada correctamente.');
+}
 
 public function update(Request $request, $id)
 {

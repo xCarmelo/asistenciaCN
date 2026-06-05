@@ -1,3 +1,4 @@
+{{-- resources/views/estudiantes/index.blade.php --}}
 @extends('layouts.app')
 
 @section('title', 'Estudiantes')
@@ -38,7 +39,7 @@
         </div>
     @endif
 
-    {{-- FILTROS CON BOTÓN --}}
+    {{-- FILTROS --}}
     <div class="card border-0 shadow-sm mb-4">
         <div class="card-body">
             <form method="GET" action="{{ route('estudiantes.index') }}" class="row g-3">
@@ -51,7 +52,9 @@
                     <select name="seccion_id" class="form-select">
                         <option value="">Todas</option>
                         @foreach($secciones as $seccion)
-                            <option value="{{ $seccion->id }}" {{ request('seccion_id') == $seccion->id ? 'selected' : '' }}>{{ $seccion->nombre }}</option>
+                            <option value="{{ $seccion->id }}" {{ request('seccion_id') == $seccion->id ? 'selected' : '' }}>
+                                {{ $seccion->nombre }}
+                            </option>
                         @endforeach
                     </select>
                 </div>
@@ -59,8 +62,11 @@
                     <label class="form-label fw-semibold">Estado</label>
                     <select name="estado" class="form-select">
                         <option value="">Todos</option>
-                        <option value="Activo" {{ request('estado') == 'Activo' ? 'selected' : '' }}>Activo</option>
-                        <option value="Inactivo" {{ request('estado') == 'Inactivo' ? 'selected' : '' }}>Inactivo</option>
+                        @foreach($estados as $estado)
+                            <option value="{{ $estado->id }}" {{ request('estado') == $estado->id ? 'selected' : '' }}>
+                                {{ $estado->nombre }}
+                            </option>
+                        @endforeach
                     </select>
                 </div>
                 <div class="col-md-3 d-flex gap-2 align-items-end">
@@ -84,7 +90,7 @@
                         <tr>
                             <th>#</th>
                             <th>Nombre completo</th>
-                            <th>Número lista</th>
+                            <th>N° Lista</th>
                             <th>Sección</th>
                             <th>Género</th>
                             <th>Estado</th>
@@ -92,61 +98,94 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @forelse($estudiantes as $estudiante)
-                        <tr>
-                            <td>{{ ($estudiantes->currentPage() - 1) * $estudiantes->perPage() + $loop->iteration }}</td>
-                            <td class="fw-semibold">{{ $estudiante->name }}</td>
-                            <td>{{ $estudiante->numero_lista ?? '-' }}</td>
-                            <td>{{ $estudiante->seccion->nombre ?? 'Sin asignar' }}</td>
-                            <td>
-                                @if($estudiante->genero == 'M') Masculino
-                                @elseif($estudiante->genero == 'F') Femenino
-                                @else - @endif
-                            </td>
-                            <td><span class="badge bg-{{ $estudiante->estado == 'Activo' ? 'success' : 'secondary' }}">{{ $estudiante->estado }}</span></td>
-                            <td>
-                                <div class="d-flex justify-content-center gap-2">
-                                    <button class="btn btn-sm btn-outline-primary edit-btn" data-bs-toggle="modal" data-bs-target="#editModal"
-                                        data-id="{{ $estudiante->id }}"
-                                        data-name="{{ $estudiante->name }}"
-                                        data-numero_lista="{{ $estudiante->numero_lista }}"
-                                        data-seccion="{{ $estudiante->id_seccion }}"
-                                        data-genero="{{ $estudiante->genero }}"
-                                        data-anio="{{ $estudiante->año }}"
-                                        data-estado="{{ $estudiante->estado }}">
-                                        <i class="bi bi-pencil"></i>
-                                    </button>
-                                    @if($estudiante->estado == 'Activo')
-                                        <button class="btn btn-sm btn-outline-danger delete-btn" data-bs-toggle="modal" data-bs-target="#deleteModal"
-                                            data-id="{{ $estudiante->id }}" data-nombre="{{ $estudiante->name }}" data-tipo="eliminar">
-                                            <i class="bi bi-trash"></i>
-                                        </button>
+                        @forelse($historiales as $historial)
+                            @php
+                                $estudiante = $historial->estudiante;
+                                $seccion = $historial->seccion;
+                                $estado = $historial->estado;
+                            @endphp
+                            <tr>
+                                <td>{{ ($historiales->currentPage() - 1) * $historiales->perPage() + $loop->iteration }}</td>
+                                <td class="fw-semibold">{{ $estudiante->name ?? 'N/A' }}</td>
+                                <td>{{ $historial->numero_lista ?? '-' }}</td>
+                                <td>{{ $seccion->nombre ?? 'Sin asignar' }}</td>
+                                <td>
+                                    @if(isset($estudiante->genero))
+                                        {{ $estudiante->genero == 'M' ? 'Masculino' : ($estudiante->genero == 'F' ? 'Femenino' : '-') }}
                                     @else
-                                        <button class="btn btn-sm btn-outline-success reactivar-btn" data-bs-toggle="modal" data-bs-target="#deleteModal"
-                                            data-id="{{ $estudiante->id }}" data-nombre="{{ $estudiante->name }}" data-tipo="reactivar">
-                                            <i class="bi bi-arrow-repeat"></i>
-                                        </button>
+                                        -
                                     @endif
-                                </div>
-                            </td>
-                        </tr>
+                                </td>
+                                <td>
+                                    @if($estado)
+                                        <span class="badge bg-{{ $estado->nombre == 'Activo' ? 'success' : 'secondary' }}">
+                                            {{ $estado->nombre }}
+                                        </span>
+                                    @else
+                                        <span class="badge bg-secondary">Sin estado</span>
+                                    @endif
+                                </td>
+                               <td>
+                                    <div class="d-flex justify-content-center gap-2">
+                                        {{-- Botón Editar: solo si el estado permite edición (ej. Activo) --}}
+                                        @if($estado && $estado->nombre == 'Activo')
+                                            <button class="btn btn-sm btn-outline-primary edit-btn"
+                                                    data-bs-toggle="modal"
+                                                    data-bs-target="#editModal"
+                                                    data-id="{{ $estudiante->id ?? '' }}"
+                                                    data-name="{{ $estudiante->name ?? '' }}"
+                                                    data-numero_lista="{{ $historial->numero_lista ?? '' }}"
+                                                    data-seccion="{{ $historial->seccion_id ?? '' }}"
+                                                    data-genero="{{ $estudiante->genero ?? '' }}">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                        @endif
+
+                                        {{-- Botón Eliminar (desactivar): solo si el estado es Activo --}}
+                                        @if($estado && $estado->nombre == 'Activo')
+                                            <button class="btn btn-sm btn-outline-danger delete-btn"
+                                                    data-bs-toggle="modal"
+                                                    data-bs-target="#deleteModal"
+                                                    data-id="{{ $estudiante->id ?? '' }}"
+                                                    data-nombre="{{ $estudiante->name ?? '' }}"
+                                                    data-tipo="eliminar">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        @else
+                                            {{-- Botón Reactivar (cambiar estado): solo si NO es Activo --}}
+                                            <button class="btn btn-sm btn-outline-success reactivar-btn"
+                                                    data-bs-toggle="modal"
+                                                    data-bs-target="#reactivarModal"
+                                                    data-id="{{ $estudiante->id ?? '' }}"
+                                                    data-nombre="{{ $estudiante->name ?? '' }}"
+                                                    data-tipo="reactivar">
+                                                <i class="bi bi-arrow-repeat"></i>
+                                            </button>
+                                        @endif
+                                    </div>
+                                </td>
+                            </tr>
                         @empty
-                            <tr><td colspan="7" class="text-center py-5">
-                                <div class="text-muted">
-                                    <i class="bi bi-database-x fs-1 d-block mb-3"></i>
-                                    No se encontraron registros.
-                                </div>
-                            </div></td>
+                            <tr>
+                                <td colspan="7" class="text-center py-5">
+                                    <div class="text-muted">
+                                        <i class="bi bi-database-x fs-1 d-block mb-3"></i>
+                                        No se encontraron registros.
+                                    </div>
+                                </td>
+                            </tr>
                         @endforelse
                     </tbody>
                 </table>
             </div>
-            <div class="mt-3">{{ $estudiantes->withQueryString()->links('pagination::bootstrap-5') }}</div>
+            <div class="mt-3">
+                {{ $historiales->withQueryString()->links('pagination::bootstrap-5') }}
+            </div>
         </div>
     </div>
 </div>
 
-<!-- MODAL CREAR -->
+{{-- MODAL CREAR --}}
 <div class="modal fade" id="createModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -157,9 +196,16 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="mb-3"><label>Nombre completo *</label><input type="text" name="name" class="form-control" required></div>
-                    <div class="mb-3"><label>Número de lista *</label><input type="number" name="numero_lista" class="form-control" required></div>
-                    <div class="mb-3"><label>Sección *</label>
+                    <div class="mb-3">
+                        <label>Nombre completo *</label>
+                        <input type="text" name="name" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>Número de lista *</label>
+                        <input type="number" name="numero_lista" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>Sección *</label>
                         <select name="id_seccion" class="form-select" required>
                             <option value="">Seleccionar</option>
                             @foreach($secciones as $seccion)
@@ -167,14 +213,14 @@
                             @endforeach
                         </select>
                     </div>
-                    <div class="mb-3"><label>Género *</label>
+                    <div class="mb-3">
+                        <label>Género *</label>
                         <select name="genero" class="form-select" required>
                             <option value="">Seleccionar</option>
                             <option value="M">Masculino</option>
                             <option value="F">Femenino</option>
                         </select>
                     </div>
-                    <div class="mb-3"><label>Año</label><input type="number" name="año" class="form-control" value="{{ date('Y') }}"></div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -184,38 +230,39 @@
         </div>
     </div>
 </div>
-
-<!-- MODAL EDITAR -->
+{{-- MODAL EDITAR --}}
 <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
             <form id="editForm" method="POST" action="">
-                @csrf @method('PUT')
+                @csrf
+                @method('PUT')
                 <div class="modal-header">
                     <h5 class="modal-title">Editar Estudiante</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="mb-3"><label>Nombre completo *</label><input type="text" name="name" id="edit_name" class="form-control" required></div>
-                    <div class="mb-3"><label>Número de lista *</label><input type="number" name="numero_lista" id="edit_numero_lista" class="form-control" required></div>
-                    <div class="mb-3"><label>Sección *</label>
+                    <div class="mb-3">
+                        <label>Nombre completo *</label>
+                        <input type="text" name="name" id="edit_name" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>Número de lista *</label>
+                        <input type="number" name="numero_lista" id="edit_numero_lista" class="form-control" required min="1">
+                    </div>
+                    <div class="mb-3">
+                        <label>Sección *</label>
                         <select name="id_seccion" id="edit_id_seccion" class="form-select" required>
                             @foreach($secciones as $seccion)
                                 <option value="{{ $seccion->id }}">{{ $seccion->nombre }}</option>
                             @endforeach
                         </select>
                     </div>
-                    <div class="mb-3"><label>Género *</label>
+                    <div class="mb-3">
+                        <label>Género *</label>
                         <select name="genero" id="edit_genero" class="form-select" required>
                             <option value="M">Masculino</option>
                             <option value="F">Femenino</option>
-                        </select>
-                    </div>
-                    <div class="mb-3"><label>Año</label><input type="number" name="año" id="edit_anio" class="form-control"></div>
-                    <div class="mb-3"><label>Estado</label>
-                        <select name="estado" id="edit_estado" class="form-select">
-                            <option value="Activo">Activo</option>
-                            <option value="Inactivo">Inactivo</option>
                         </select>
                     </div>
                 </div>
@@ -228,7 +275,8 @@
     </div>
 </div>
 
-<!-- MODAL IMPORTAR -->
+
+{{-- MODAL IMPORTAR --}}
 <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -239,8 +287,13 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="mb-3"><label>Archivo Excel (xlsx, xls, csv)</label><input type="file" name="archivo" class="form-control" required></div>
-                    <div class="form-text">Columnas requeridas: <strong>nombre, seccion, numero_lista, genero</strong> (M o F). Opcional: año.</div>
+                    <div class="mb-3">
+                        <label>Archivo Excel (xlsx, xls, csv)</label>
+                        <input type="file" name="archivo" class="form-control" required>
+                    </div>
+                    <div class="form-text">
+                        Columnas requeridas: <strong>nombre, seccion, numero_lista, genero</strong> (M o F).
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
@@ -251,107 +304,155 @@
     </div>
 </div>
 
-<!-- MODAL CONFIRMAR ELIMINAR / REACTIVAR -->
+{{-- MODAL CONFIRMAR ELIMINACIÓN (con opción de estado) --}}
 <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="deleteModalTitle">Confirmar</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="deleteModalBody"></div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <form id="deleteForm" method="POST" style="display:inline;">
-                    @csrf
-                    <input type="hidden" name="_method" id="deleteMethod" value="DELETE">
-                    <button type="submit" class="btn btn-danger" id="deleteModalBtn">Aceptar</button>
-                </form>
-            </div>
+            <form id="deleteForm" method="POST">
+                @csrf
+                <input type="hidden" name="_method" id="deleteMethod" value="DELETE">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteModalTitle">Desactivar estudiante</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="deleteModalBody"></p>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Motivo de desactivación</label>
+                        <select name="estado_id" id="deleteEstadoId" class="form-select" required>
+                            <option value="">-- Seleccionar --</option>
+                            @foreach($estados as $estado)
+                                @if(!$estado->permite_asistencia) {{-- Solo estados que NO permiten asistencia --}}
+                                    <option value="{{ $estado->id }}">{{ $estado->nombre }}</option>
+                                @endif
+                            @endforeach
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger" id="deleteModalBtn">Desactivar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+
+{{-- MODAL REACTIVAR (solo estado) --}}
+<div class="modal fade" id="reactivarModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="reactivarForm" method="POST" action="">
+                @csrf
+                @method('PATCH')
+                <div class="modal-header">
+                    <h5 class="modal-title">Cambiar estado del estudiante</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="reactivarModalBody"></p>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nuevo estado</label>
+                        <select name="estado_id" id="reactivarEstadoId" class="form-select" required>
+                            <option value="">-- Seleccionar --</option>
+                            @foreach($estados as $estado)
+                                @if($estado->nombre != 'Inactivo')
+                                    <option value="{{ $estado->id }}">{{ $estado->nombre }}</option>
+                                @endif
+                            @endforeach
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success">Cambiar estado</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Esperar a que Bootstrap esté disponible globalmente
-        function initBootstrap() {
-            if (typeof window.bootstrap !== 'undefined') {
-                return window.bootstrap;
-            }
-            if (typeof bootstrap !== 'undefined') {
-                window.bootstrap = bootstrap;
-                return bootstrap;
-            }
-            setTimeout(initBootstrap, 100);
+        // Esperar a que Bootstrap esté disponible
+        function getBootstrap() {
+            if (typeof window.bootstrap !== 'undefined') return window.bootstrap;
+            if (typeof bootstrap !== 'undefined') return bootstrap;
             return null;
         }
-        
-        const bs = initBootstrap();
+
+        let bs = getBootstrap();
         if (!bs) {
-            console.error('Bootstrap no se cargó después de varios intentos.');
+            console.error('Bootstrap no encontrado. Asegúrate de incluir Bootstrap JS.');
             return;
         }
 
-        // ======================================
-        // MODAL EDITAR
-        // ======================================
-        document.querySelectorAll('.edit-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const form = document.getElementById('editForm');
-                if (!form) return;
-                form.action = `/estudiantes/${this.dataset.id}`;
-                document.getElementById('edit_name').value = this.dataset.name ?? '';
-                document.getElementById('edit_numero_lista').value = this.dataset.numero_lista ?? '';
-                document.getElementById('edit_id_seccion').value = this.dataset.seccion ?? '';
-                document.getElementById('edit_genero').value = this.dataset.genero ?? '';
-                document.getElementById('edit_anio').value = this.dataset.anio ?? '';
-                document.getElementById('edit_estado').value = this.dataset.estado ?? '';
-            });
-        });
-
-        // ======================================
-        // MODAL ELIMINAR / REACTIVAR
-        // ======================================
-        const deleteForm = document.getElementById('deleteForm');
-        const deleteMethod = document.getElementById('deleteMethod');
-        const modalTitle = document.getElementById('deleteModalTitle');
-        const modalBody = document.getElementById('deleteModalBody');
-        const modalBtn = document.getElementById('deleteModalBtn');
-
-        document.querySelectorAll('.delete-btn, .reactivar-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const id = this.dataset.id;
-                const nombre = this.dataset.nombre;
-                const tipo = this.dataset.tipo;
-                if (tipo === 'eliminar') {
-                    modalTitle.innerText = 'Confirmar eliminación';
-                    modalBody.innerText = `¿Desea pasar a inactivo al estudiante "${nombre}"?`;
-                    modalBtn.innerText = 'Eliminar';
-                    modalBtn.classList.remove('btn-success');
-                    modalBtn.classList.add('btn-danger');
-                    deleteForm.action = `/estudiantes/${id}`;
-                    deleteMethod.value = 'DELETE';
-                } else {
-                    modalTitle.innerText = 'Confirmar reactivación';
-                    modalBody.innerText = `¿Desea reactivar al estudiante "${nombre}"?`;
-                    modalBtn.innerText = 'Reactivar';
-                    modalBtn.classList.remove('btn-danger');
-                    modalBtn.classList.add('btn-success');
-                    deleteForm.action = `/estudiantes/${id}/reactivar`;
-                    deleteMethod.value = 'PATCH';
-                }
-            });
-        });
-
-        // Inicializar modales solo si existen
+        // Inicializar modales manualmente si es necesario (por si los data-bs-toggle no funcionan)
         document.querySelectorAll('.modal').forEach(modalEl => {
             try {
                 new bs.Modal(modalEl);
-            } catch(e) {
-                console.warn('Error inicializando modal:', e);
-            }
+            } catch(e) {}
         });
+
+      // --- Modal Editar: cargar datos (sin cambios) ---
+document.querySelectorAll('.edit-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const form = document.getElementById('editForm');
+        if (!form) return;
+        const estudianteId = this.dataset.id;
+        if (estudianteId) {
+            form.action = `/estudiantes/${estudianteId}`;
+        }
+        document.getElementById('edit_name').value = this.dataset.name || '';
+        document.getElementById('edit_numero_lista').value = this.dataset.numero_lista || '';
+        document.getElementById('edit_id_seccion').value = this.dataset.seccion || '';
+        document.getElementById('edit_genero').value = this.dataset.genero || '';
+        // YA NO hay campo "año" ni "estado"
+    });
+});
+
+// --- Modal Eliminar (desactivar) ---
+document.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const id = this.dataset.id;
+        const nombre = this.dataset.nombre;
+        
+        document.getElementById('deleteModalTitle').innerText = 'Desactivar estudiante';
+        document.getElementById('deleteModalBody').innerHTML = `¿Desea desactivar al estudiante "<strong>${nombre}</strong>"? Seleccione el motivo:`;
+        
+        // Limpiar select
+        const estadoSelect = document.getElementById('deleteEstadoId');
+        if (estadoSelect) {
+            estadoSelect.value = '';
+            estadoSelect.disabled = false;
+            estadoSelect.required = true;
+        }
+        
+        // Configurar el formulario
+        const deleteForm = document.getElementById('deleteForm');
+        deleteForm.action = `/estudiantes/${id}`;
+        document.getElementById('deleteMethod').value = 'DELETE';
+    });
+});
+
+// --- Modal Reactivar (solo estado) ---
+document.querySelectorAll('.reactivar-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const id = this.dataset.id;
+        const nombre = this.dataset.nombre;
+        
+        document.getElementById('reactivarModalBody').innerHTML = `Seleccione el nuevo estado para el estudiante "<strong>${nombre}</strong>". Los datos de sección y número de lista se mantendrán igual que antes de su desactivación.`;
+        
+        const reactivarForm = document.getElementById('reactivarForm');
+        reactivarForm.action = `/estudiantes/${id}/reactivar`;
+        
+        const estadoSelect = document.getElementById('reactivarEstadoId');
+        if (estadoSelect) estadoSelect.value = '';
+    });
+});
+
+
     });
 </script>
 @endsection

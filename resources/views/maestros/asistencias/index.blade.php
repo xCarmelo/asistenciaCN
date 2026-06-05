@@ -88,7 +88,7 @@
                             </td>
                         </tr>
                         @empty
-                            <td><td colspan="8" class="text-center py-4">No hay asistencias registradas.@endforelse
+                            <td><td colspan="5" class="text-center py-4">No hay asistencias registradas.@endforelse
                     </tbody>
                 </table>
             </div>

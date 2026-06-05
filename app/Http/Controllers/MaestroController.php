@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Maestro;
 use App\Models\Seccion;
+use App\Models\HistorialMaestro;
+use App\Models\Estado;
 use App\Imports\MaestrosImport;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Http\Request;
@@ -12,32 +14,30 @@ use Illuminate\Support\Facades\Log;
 
 class MaestroController extends Controller
 {
-    public function index(Request $request)
+public function index()
+{
+    $maestros = Maestro::with('historialActivo.seccion', 'historialActivo.estado')
+        ->orderBy('name')
+        ->paginate(15);   // Cambiado de get() a paginate()
+
+    // Solo secciones disponibles (sin maestro activo)
+    $seccionesDisponibles = Seccion::whereDoesntHave('historialMaestros', function($q) {
+        $q->whereNull('fecha_fin')->whereHas('estado', function($e) {
+            $e->where('permite_asistencia', true);
+        });
+    })->orderBy('nombre')->get();
+
+    return view('maestros.index', compact('maestros', 'seccionesDisponibles'));
+}
+
+    public function create()
     {
-        $query = Maestro::with('seccionesGuiadas')->orderBy('name');
-
-        if ($request->filled('nombre')) {
-            $query->where('name', 'like', '%' . $request->nombre . '%');
-        }
-        if ($request->filled('genero')) {
-            $query->where('genero', $request->genero);
-        }
-        if ($request->filled('estado')) {
-            $estadoVal = $request->estado == 'Activo' ? 1 : 0;
-            $query->where('estado', $estadoVal);
-        } else {
-            $query->where('estado', 1);
-        }
-
-        $maestros = $query->paginate(15)->appends($request->query());
-
-        // Secciones disponibles (activas y sin maestro guía)
-        $seccionesDisponibles = Seccion::where('estado', 1)
-            ->whereNull('id_maestro_guia')
-            ->orderBy('nombre')
-            ->get();
-
-        return view('maestros.index', compact('maestros', 'seccionesDisponibles'));
+        $seccionesDisponibles = Seccion::whereDoesntHave('historialMaestros', function($q) {
+            $q->whereNull('fecha_fin')->whereHas('estado', function($e) {
+                $e->where('permite_asistencia', true);
+            });
+        })->orderBy('nombre')->get();
+        return view('maestros.create', compact('seccionesDisponibles'));
     }
 
     public function store(Request $request)
@@ -48,33 +48,43 @@ class MaestroController extends Controller
             'tutelado'  => 'nullable|exists:secciones,id',
         ]);
 
-        // Verificar que la sección seleccionada esté disponible (sin maestro)
-        if ($request->filled('tutelado')) {
-            $seccion = Seccion::find($request->tutelado);
-            if (!$seccion || $seccion->id_maestro_guia !== null) {
-                return redirect()->back()
-                    ->with('error', 'La sección seleccionada ya tiene un maestro guía asignado.')
-                    ->withInput();
-            }
-        }
-
         try {
             DB::transaction(function () use ($request) {
                 $maestro = Maestro::create([
                     'name'   => $request->name,
                     'genero' => $request->genero,
-                    'estado' => 1,
+                    'estado_general' => 1,
                 ]);
-                if ($request->filled('tutelado')) {
-                    $seccion = Seccion::find($request->tutelado);
-                    $maestro->seccionesGuiadas()->save($seccion);
-                }
+
+                $estadoActivo = Estado::where('nombre', 'Activo')->first();
+
+                HistorialMaestro::create([
+                    'maestro_id'    => $maestro->id,
+                    'seccion_id'    => $request->tutelado,
+                    'estado_id'     => $estadoActivo->id,
+                    'fecha_inicio'  => now()->toDateString(),
+                    'fecha_fin'     => null,
+                ]);
             });
-            return redirect()->route('maestros.index', request()->query())->with('success', 'Maestro creado exitosamente.');
+            return redirect()->route('maestros.index')->with('success', 'Maestro creado exitosamente.');
         } catch (\Exception $e) {
             Log::error('Error al crear maestro: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Error al crear el maestro.')->withInput();
         }
+    }
+
+    public function edit(Maestro $maestro)
+    {
+        $historialActivo = $maestro->historialActivo;
+        $seccionesDisponibles = Seccion::whereDoesntHave('historialMaestros', function($q) use ($maestro) {
+            $q->whereNull('fecha_fin')
+              ->where('maestro_id', '!=', $maestro->id)
+              ->whereHas('estado', function($e) {
+                  $e->where('permite_asistencia', true);
+              });
+        })->orderBy('nombre')->get();
+
+        return view('maestros.edit', compact('maestro', 'historialActivo', 'seccionesDisponibles'));
     }
 
     public function update(Request $request, Maestro $maestro)
@@ -86,42 +96,43 @@ class MaestroController extends Controller
             'estado'    => 'nullable|in:Activo,Inactivo',
         ]);
 
-        // Obtener la sección actual que tiene el maestro (si tiene)
-        $seccionActual = $maestro->seccionesGuiadas->first();
-
-        // Si se seleccionó una nueva sección y es diferente a la actual
-        if ($request->filled('tutelado') && $request->tutelado != ($seccionActual ? $seccionActual->id : null)) {
-            // Verificar que la nueva sección esté disponible
-            $nuevaSeccion = Seccion::find($request->tutelado);
-            if (!$nuevaSeccion || $nuevaSeccion->id_maestro_guia !== null) {
-                return redirect()->back()
-                    ->with('error', 'La sección seleccionada ya tiene otro maestro guía asignado.')
-                    ->withInput();
-            }
-        }
-
         try {
-            DB::transaction(function () use ($request, $maestro, $seccionActual) {
-                // Actualizar datos del maestro
+            DB::transaction(function () use ($request, $maestro) {
+                $historialActual = $maestro->historialActivo;
+                $nombreEstado = $request->estado ?? ($historialActual->estado->nombre ?? 'Activo');
+                $nuevoEstado = Estado::where('nombre', $nombreEstado)->first();
+                $nuevaSeccion = $request->tutelado;
+
+                $cambios = false;
+
+                // Actualizar datos fijos del maestro
                 $maestro->update([
                     'name'   => $request->name,
                     'genero' => $request->genero,
-                    'estado' => $request->estado == 'Activo' ? 1 : 0,
                 ]);
 
-                // Liberar la sección actual (si existe)
-                if ($seccionActual) {
-                    $seccionActual->id_maestro_guia = null;
-                    $seccionActual->save();
+                // Verificar cambios en sección o estado
+                if ($historialActual->seccion_id != $nuevaSeccion ||
+                    $historialActual->estado_id != $nuevoEstado->id) {
+
+                    $cambios = true;
+                    // Cerrar historial actual
+                    $historialActual->fecha_fin = now()->subDay()->toDateString();
+                    $historialActual->save();
+
+                    // Crear nuevo historial
+                    HistorialMaestro::create([
+                        'maestro_id'    => $maestro->id,
+                        'seccion_id'    => $nuevaSeccion,
+                        'estado_id'     => $nuevoEstado->id,
+                        'fecha_inicio'  => now()->toDateString(),
+                        'fecha_fin'     => null,
+                    ]);
                 }
 
-                // Asignar nueva sección si se seleccionó una
-                if ($request->filled('tutelado')) {
-                    $nuevaSeccion = Seccion::find($request->tutelado);
-                    $maestro->seccionesGuiadas()->save($nuevaSeccion);
-                }
+                // Si se cambió la sección, liberar la anterior (no es necesario hacer nada adicional)
             });
-            return redirect()->route('maestros.index', request()->query())->with('success', 'Maestro actualizado correctamente.');
+            return redirect()->route('maestros.index')->with('success', 'Maestro actualizado correctamente.');
         } catch (\Exception $e) {
             Log::error('Error al actualizar: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Error al actualizar el maestro.');
@@ -131,34 +142,60 @@ class MaestroController extends Controller
     public function destroy(Maestro $maestro)
     {
         try {
-            // Liberar la sección que tuviera asignada (poner id_maestro_guia = null)
-            $seccionActual = $maestro->seccionesGuiadas->first();
-            if ($seccionActual) {
-                $seccionActual->id_maestro_guia = null;
-                $seccionActual->save();
-            }
+            DB::transaction(function () use ($maestro) {
+                $historialActual = $maestro->historialActivo;
+                if ($historialActual && $historialActual->estado->permite_asistencia) {
+                    // Desactivar: cerrar historial actual y crear uno con estado Inactivo
+                    $historialActual->fecha_fin = now()->subDay()->toDateString();
+                    $historialActual->save();
 
-            // Desactivar maestro
-            $maestro->estado = 0;
-            $maestro->save();
-
-            return redirect()->route('maestros.index', request()->query())->with('success', 'Maestro desactivado correctamente.');
+                    $estadoInactivo = Estado::where('nombre', 'Inactivo')->first();
+                    HistorialMaestro::create([
+                        'maestro_id'    => $maestro->id,
+                        'seccion_id'    => $historialActual->seccion_id,
+                        'estado_id'     => $estadoInactivo->id,
+                        'fecha_inicio'  => now()->toDateString(),
+                        'fecha_fin'     => null,
+                    ]);
+                }
+            });
+            return redirect()->route('maestros.index')->with('success', 'Maestro desactivado correctamente.');
         } catch (\Exception $e) {
             Log::error('Error al desactivar: ' . $e->getMessage());
-            return redirect()->route('maestros.index', request()->query())->with('error', 'No se pudo desactivar el maestro.');
+            return redirect()->route('maestros.index')->with('error', 'No se pudo desactivar el maestro.');
         }
     }
 
     public function reactivar(Maestro $maestro)
     {
         try {
-            $maestro->estado = 1;
-            $maestro->save();
-            return redirect()->route('maestros.index', request()->query())->with('success', 'Maestro reactivado correctamente.');
+            DB::transaction(function () use ($maestro) {
+                $historialActual = $maestro->historialActivo;
+                if ($historialActual && $historialActual->estado->nombre == 'Inactivo') {
+                    $historialActual->fecha_fin = now()->subDay()->toDateString();
+                    $historialActual->save();
+
+                    $estadoActivo = Estado::where('nombre', 'Activo')->first();
+                    HistorialMaestro::create([
+                        'maestro_id'    => $maestro->id,
+                        'seccion_id'    => $historialActual->seccion_id,
+                        'estado_id'     => $estadoActivo->id,
+                        'fecha_inicio'  => now()->toDateString(),
+                        'fecha_fin'     => null,
+                    ]);
+                }
+            });
+            return redirect()->route('maestros.index')->with('success', 'Maestro reactivado correctamente.');
         } catch (\Exception $e) {
             Log::error('Error al reactivar: ' . $e->getMessage());
-            return redirect()->route('maestros.index', request()->query())->with('error', 'Error al reactivar el maestro.');
+            return redirect()->route('maestros.index')->with('error', 'Error al reactivar el maestro.');
         }
+    }
+
+    public function importForm()
+    {
+        $secciones = Seccion::orderBy('nombre')->get();
+        return view('maestros.import', compact('secciones'));
     }
 
     public function import(Request $request)
@@ -169,7 +206,7 @@ class MaestroController extends Controller
 
         try {
             Excel::import(new MaestrosImport, $request->file('archivo'));
-            return redirect()->route('maestros.index', request()->query())->with('success', 'Maestros importados correctamente.');
+            return redirect()->route('maestros.index')->with('success', 'Maestros importados correctamente.');
         } catch (\Exception $e) {
             Log::error('Error al importar: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Error al importar: ' . $e->getMessage());

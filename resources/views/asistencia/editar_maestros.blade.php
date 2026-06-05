@@ -8,7 +8,7 @@
     <ol class="breadcrumb mb-4">
         <li class="breadcrumb-item"><a href="{{ route('home') }}">Inicio</a></li>
         <li class="breadcrumb-item"><a href="{{ route('maestros.asistencias.index') }}">Asistencias Maestros</a></li>
-        <li class="breadcrumb-item active">Editar 
+        <li class="breadcrumb-item active">Editar</li>
     </ol>
 
     <div class="card mb-4">
@@ -33,20 +33,20 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach($maestros as $m)
-                                <tr>
-                                    <td>{{ $loop->iteration }}</td>
-                                    <td>{{ $m->name }}</td>
-                                    <td>{{ $m->seccionesGuiadas->first()?->nombre ?? 'Sin tutelado' }}</td>
-                                    <td>
-                                        <select name="asistencia[{{ $m->id }}]" class="form-select" style="width: auto; min-width: 130px;">
-                                            <option value="P" {{ $m->asistencia_actual == 'P' ? 'selected' : '' }}>Presente</option>
-                                            <option value="A" {{ $m->asistencia_actual == 'A' ? 'selected' : '' }}>Ausente</option>
-                                            <option value="J" {{ $m->asistencia_actual == 'J' ? 'selected' : '' }}>Justificado</option>
-                                            <option value="T" {{ $m->asistencia_actual == 'T' ? 'selected' : '' }}>Llegada tarde</option>
-                                        </select>
-                                    </td>
-                                </tr>
+                            @foreach($historiales as $historial)
+                            <tr>
+                                <td>{{ $loop->iteration }}</td>
+                                <td>{{ $historial->maestro->name }}</td>
+                                <td>{{ $historial->seccion->nombre ?? 'Sin tutelado' }}</td>
+                                <td>
+                                    <select name="asistencia[{{ $historial->maestro_id }}]" class="form-select" style="width: auto; min-width: 130px;">
+                                        <option value="P" {{ $historial->asistencia_actual == 'P' ? 'selected' : '' }}>Presente</option>
+                                        <option value="A" {{ $historial->asistencia_actual == 'A' ? 'selected' : '' }}>Ausente</option>
+                                        <option value="J" {{ $historial->asistencia_actual == 'J' ? 'selected' : '' }}>Justificado</option>
+                                        <option value="T" {{ $historial->asistencia_actual == 'T' ? 'selected' : '' }}>Llegada tarde</option>
+                                    </select>
+                                </td>
+                            </tr>
                             @endforeach
                         </tbody>
                     </table>
@@ -56,7 +56,9 @@
                     <button type="submit" class="btn btn-primary">
                         <i class="bi bi-save"></i> Guardar cambios
                     </button>
-                    
+                    <a href="{{ route('maestros.asistencias.index') }}" class="btn btn-secondary">
+                        Cancelar
+                    </a>
                 </div>
             </form>
         </div>

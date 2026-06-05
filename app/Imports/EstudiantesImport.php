@@ -3,59 +3,58 @@
 namespace App\Imports;
 
 use App\Models\Estudiante;
+use App\Models\HistorialEstudiante;
 use App\Models\Seccion;
+use App\Models\Estado;
+use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\ToModel;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
 use Maatwebsite\Excel\Concerns\WithValidation;
+use Illuminate\Support\Collection;
+use Maatwebsite\Excel\Concerns\ToCollection;
 
-class EstudiantesImport implements ToModel, WithHeadingRow, WithValidation
+class EstudiantesImport implements ToCollection, WithHeadingRow
 {
-protected $seccionesAfectadas = [];
+    private $seccionesAfectadas = [];
 
-    public function model(array $row)
+    public function collection(Collection $rows)
     {
-        $seccion = Seccion::where('nombre', $row['seccion'])->first();
-        if (!$seccion) {
-            throw new \Exception("La sección '{$row['seccion']}' no existe.");
+        $estadoActivo = Estado::where('nombre', 'Activo')->first();
+        if (!$estadoActivo) {
+            throw new \Exception('No se encontró el estado "Activo" en la tabla estados.');
         }
 
-        // Registrar sección afectada
-        if (!in_array($seccion->id, $this->seccionesAfectadas)) {
-            $this->seccionesAfectadas[] = $seccion->id;
+        foreach ($rows as $row) {
+            if (empty($row['nombre']) || empty($row['seccion']) || empty($row['numero_lista']) || empty($row['genero'])) {
+                continue;
+            }
+
+            $seccion = Seccion::where('nombre', trim($row['seccion']))->first();
+            if (!$seccion) {
+                throw new \Exception('Sección "' . $row['seccion'] . '" no existe.');
+            }
+
+            // Crear NUEVO estudiante (permitir homónimos)
+            $estudiante = Estudiante::create([
+                'name'   => trim($row['nombre']),
+                'genero' => strtoupper(trim($row['genero'])),
+            ]);
+
+            // Crear historial activo con número inicial (será reordenado después)
+            HistorialEstudiante::create([
+                'estudiante_id' => $estudiante->id,
+                'seccion_id'    => $seccion->id,
+                'estado_id'     => $estadoActivo->id,
+                'numero_lista'  => (int)$row['numero_lista'],
+                'fecha_inicio'  => Carbon::now()->toDateString(),
+                'fecha_fin'     => null,
+            ]);
+
+            // Registrar sección afectada para reordenar después
+            if (!in_array($seccion->id, $this->seccionesAfectadas)) {
+                $this->seccionesAfectadas[] = $seccion->id;
+            }
         }
-
-        return new Estudiante([
-            'name'          => $row['nombre'],
-            'numero_lista'  => $row['numero_lista'],
-            'genero'        => $row['genero'],
-            'año'           => $row['año'] ?? null,
-            'id_seccion'    => $seccion->id,
-            'estado'        => 'Activo',
-        ]);
-    }
-
-    public function rules(): array
-    {
-        return [
-            '*.nombre'       => 'required|string',
-            '*.seccion'      => 'required|string|exists:secciones,nombre',
-            '*.numero_lista' => 'required|integer',
-            '*.genero'       => 'required|in:M,F',
-            '*.año'          => 'nullable|integer',
-        ];
-    }
-
-    public function customValidationMessages()
-    {
-        return [
-            '*.nombre.required'       => 'El nombre es obligatorio en la fila :row.',
-            '*.seccion.required'      => 'La sección es obligatoria en la fila :row.',
-            '*.seccion.exists'        => 'La sección :input no existe en la fila :row.',
-            '*.numero_lista.required' => 'El número de lista es obligatorio en la fila :row.',
-            '*.numero_lista.integer'  => 'El número de lista debe ser un número entero en la fila :row.',
-            '*.genero.required'       => 'El género es obligatorio en la fila :row.',
-            '*.genero.in'             => 'El género debe ser M o F en la fila :row.',
-        ];
     }
 
     public function getSeccionesAfectadas()

@@ -74,26 +74,19 @@
                             </thead>
                             <tbody>
                                 @foreach($estudiantes as $est)
-                                    @php
-                                        $asistenciaExistente = \App\Models\Asistencia::where('fecha', $fecha)
-                                                            ->where('id_estudiante', $est->id)
-                                                            ->where('id_corte', $corteId)
-                                                            ->first();
-                                        $valorAsis = $asistenciaExistente ? $asistenciaExistente->asis : 'P';
-                                    @endphp
-                                    <tr data-numero="{{ $est->numero_lista }}" data-nombre="{{ strtolower($est->name) }}">
-                                        <td>{{ $loop->iteration }}</td>
-                                        <td>{{ $est->numero_lista ?? '-' }}</td>
-                                        <td>{{ $est->name }}</td>
-                                        <td>
-                                            <select name="asistencia[{{ $est->id }}]" class="form-select" style="width: auto; min-width: 130px;">
-                                                <option value="P" {{ $valorAsis == 'P' ? 'selected' : '' }}>Presente</option>
-                                                <option value="A" {{ $valorAsis == 'A' ? 'selected' : '' }}>Ausente</option>
-                                                <option value="J" {{ $valorAsis == 'J' ? 'selected' : '' }}>Justificado</option>
-                                                <option value="T" {{ $valorAsis == 'T' ? 'selected' : '' }}>Llegada tarde</option>
-                                            </select>
-                                        </td>
-                                    </table>
+                                <tr data-numero="{{ $est->numero_lista }}" data-nombre="{{ strtolower($est->name) }}">
+                                    <td>{{ $loop->iteration }}</td>
+                                    <td>{{ $est->numero_lista ?? '-' }}</td>
+                                    <td>{{ $est->name }}</td>
+                                    <td>
+                                        <select name="asistencia[{{ $est->id }}]" class="form-select" style="width: auto; min-width: 130px;">
+                                            <option value="P" selected>Presente</option>
+                                            <option value="A">Ausente</option>
+                                            <option value="J">Justificado</option>
+                                            <option value="T">Llegada tarde</option>
+                                        </select>
+                                    </td>
+                                </tr>
                                 @endforeach
                             </tbody>
                         </table>

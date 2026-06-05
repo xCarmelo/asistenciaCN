@@ -9,6 +9,11 @@ return new class extends Migration {
             $table->string('nombre', 50);
             $table->timestamps();
         });
+        DB::table('cortes')->insert([
+            ['nombre' => 'I Corte', 'created_at' => now(), 'updated_at' => now()],
+            ['nombre' => 'II Corte', 'created_at' => now(), 'updated_at' => now()],
+            ['nombre' => 'III Corte', 'created_at' => now(), 'updated_at' => now()],
+        ]);
     }
     public function down() { Schema::dropIfExists('cortes'); }
 };

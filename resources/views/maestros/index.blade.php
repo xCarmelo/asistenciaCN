@@ -70,23 +70,31 @@
                 </thead>
                 <tbody>
                     @forelse($maestros as $maestro)
+                    @php
+                        $historial = $maestro->historialActivo;
+                        $seccionNombre = $historial?->seccion?->nombre ?? 'Sin asignar';
+                        $estadoNombre = $historial?->estado?->nombre ?? 'Inactivo';
+                        $estadoBadge = ($estadoNombre == 'Activo') ? 'success' : 'secondary';
+                        $tuteladoId = $historial?->seccion_id ?? '';
+                        $tuteladoNombre = $seccionNombre;
+                    @endphp
                     <tr>
                         <td>{{ ($maestros->currentPage() - 1) * $maestros->perPage() + $loop->iteration }}</td>
                         <td>{{ $maestro->name }}</td>
                         <td>{{ $maestro->genero == 'M' ? 'Masculino' : 'Femenino' }}</td>
-                        <td>{{ $maestro->seccionesGuiadas->first()?->nombre ?? 'Sin asignar' }}</td>
-                        <td><span class="badge bg-{{ $maestro->estado == 1 ? 'success' : 'secondary' }}">{{ $maestro->estado == 1 ? 'Activo' : 'Inactivo' }}</span></td>
+                        <td>{{ $seccionNombre }}</td>
+                        <td><span class="badge bg-{{ $estadoBadge }}">{{ $estadoNombre }}</span></td>
                         <td>
                             <button class="btn btn-sm btn-outline-primary edit-btn" data-bs-toggle="modal" data-bs-target="#editModal"
                                 data-id="{{ $maestro->id }}"
                                 data-name="{{ $maestro->name }}"
                                 data-genero="{{ $maestro->genero }}"
-                                data-tutelado="{{ $maestro->seccionesGuiadas->first()?->id ?? '' }}"
-                                data-tutelado_nombre="{{ $maestro->seccionesGuiadas->first()?->nombre ?? '' }}"
-                                data-estado="{{ $maestro->estado == 1 ? 'Activo' : 'Inactivo' }}">
+                                data-tutelado="{{ $tuteladoId }}"
+                                data-tutelado_nombre="{{ $tuteladoNombre }}"
+                                data-estado="{{ $estadoNombre }}">
                                 <i class="bi bi-pencil"></i>
                             </button>
-                            @if($maestro->estado == 1)
+                            @if($estadoNombre == 'Activo')
                                 <button class="btn btn-sm btn-outline-danger delete-btn" data-bs-toggle="modal" data-bs-target="#deleteModal"
                                     data-id="{{ $maestro->id }}" data-nombre="{{ $maestro->name }}" data-tipo="eliminar">
                                     <i class="bi bi-trash"></i>
@@ -100,7 +108,7 @@
                         </td>
                     </tr>
                     @empty
-                        <table><td colspan="6" class="text-center">No hay maestros registrados.@endforelse
+                        <tr><td colspan="6" class="text-center">No hay maestros registrados.@endforelse
                 </tbody>
             </table>
         </div>
