@@ -121,8 +121,11 @@ class EstudianteController extends Controller
                 'fecha_inicio'  => Carbon::now()->toDateString(),
                 'fecha_fin'     => null,
             ]);
+            $this->rebuildListNumbers($request->id_seccion);
 
             DB::commit();
+
+            
             return redirect()->route('estudiantes.index')->with('success', 'Estudiante creado correctamente.');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -135,80 +138,73 @@ class EstudianteController extends Controller
      * Actualizar estudiante (nombre, género, número o sección).
      */
     public function update(Request $request, $id)
-    {
-        $request->validate([
-            'name'         => 'required|string|max:100',
-            'genero'       => 'required|in:M,F',
-            'id_seccion'   => 'required|exists:secciones,id',
-            'numero_lista' => 'required|integer|min:1',
+{
+    $request->validate([
+        'name'         => 'required|string|max:100',
+        'genero'       => 'required|in:M,F',
+        'id_seccion'   => 'required|exists:secciones,id',
+        'numero_lista' => 'required|integer|min:1',
+    ]);
+
+    DB::beginTransaction();
+
+    try {
+        $estudiante = Estudiante::findOrFail($id);
+        $estudiante->update([
+            'name'   => $request->name,
+            'genero' => $request->genero,
         ]);
 
-        DB::beginTransaction();
+        $historialActivo = HistorialEstudiante::where('estudiante_id', $id)
+            ->whereNull('fecha_fin')
+            ->first();
 
-        try {
-            $estudiante = Estudiante::findOrFail($id);
-            $estudiante->update([
-                'name'   => $request->name,
-                'genero' => $request->genero,
-            ]);
-
-            $historialActivo = HistorialEstudiante::where('estudiante_id', $id)
-                ->whereNull('fecha_fin')
-                ->first();
-
-            if (!$historialActivo) {
-                DB::commit();
-                return redirect()
-                    ->route('estudiantes.index')
-                    ->with('warning', 'Solo se actualizó nombre y género. El estudiante no está activo.');
-            }
-
-            $seccionActual = $historialActivo->seccion_id;
-            $nuevaSeccion = (int) $request->id_seccion;
-            $nuevoNumero  = (int) $request->numero_lista;
-
-            // CASO 1: Cambio de sección → cerrar historial actual y crear uno nuevo (con desplazamiento en nueva sección)
-            if ($seccionActual != $nuevaSeccion) {
-                // Cerrar historial actual
-                $historialActivo->update(['fecha_fin' => now()->toDateString()]);
-                $this->rebuildListNumbers($seccionActual); // reordenar sección antigua (eliminar hueco)
-
-                // Hacer espacio en la nueva sección para el número deseado
-                $this->shiftNumbersForInsert($nuevaSeccion, $nuevoNumero, null);
-
-                // Crear nuevo historial en la nueva sección
-                HistorialEstudiante::create([
-                    'estudiante_id' => $estudiante->id,
-                    'seccion_id'    => $nuevaSeccion,
-                    'estado_id'     => $historialActivo->estado_id,
-                    'numero_lista'  => $nuevoNumero,
-                    'fecha_inicio'  => now()->toDateString(),
-                    'fecha_fin'     => null,
-                ]);
-            }
-            // CASO 2: Misma sección, pero cambia el número de lista
-            elseif ($historialActivo->numero_lista != $nuevoNumero) {
-                // Hacer espacio para el nuevo número, excluyendo al propio estudiante
-                $this->shiftNumbersForInsert($seccionActual, $nuevoNumero, $historialActivo->id);
-                // Actualizar el número en el historial activo
-                $historialActivo->update(['numero_lista' => $nuevoNumero]);
-            }
-            // CASO 3: Misma sección, mismo número → solo se actualizaron nombre/género
-
+        if (!$historialActivo) {
             DB::commit();
             return redirect()
                 ->route('estudiantes.index')
-                ->with('success', 'Estudiante actualizado correctamente.');
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error($e->getMessage());
-            return redirect()
-                ->back()
-                ->withInput()
-                ->with('error', 'Error al actualizar: ' . $e->getMessage());
+                ->with('warning', 'Solo se actualizó nombre y género. El estudiante no está activo.');
         }
+
+        $seccionActual = $historialActivo->seccion_id;
+        $nuevaSeccion = (int) $request->id_seccion;
+        $nuevoNumero  = (int) $request->numero_lista;
+
+        // CASO 1: Cambio de sección
+        if ($seccionActual != $nuevaSeccion) {
+            $historialActivo->update(['fecha_fin' => now()->toDateString()]);
+            $this->rebuildListNumbers($seccionActual);
+            $this->shiftNumbersForInsert($nuevaSeccion, $nuevoNumero, null);
+            HistorialEstudiante::create([
+                'estudiante_id' => $estudiante->id,
+                'seccion_id'    => $nuevaSeccion,
+                'estado_id'     => $historialActivo->estado_id,
+                'numero_lista'  => $nuevoNumero,
+                'fecha_inicio'  => now()->toDateString(),
+                'fecha_fin'     => null,
+            ]);
+        }
+        // CASO 2: Misma sección, cambio de número
+        elseif ($historialActivo->numero_lista != $nuevoNumero) {
+            $this->shiftNumbersForInsert($seccionActual, $nuevoNumero, $historialActivo->id);
+            $historialActivo->update(['numero_lista' => $nuevoNumero]);
+            $this->rebuildListNumbers($seccionActual);  // ← LÍNEA CLAVE
+        }
+        // CASO 3: Misma sección, mismo número → solo nombre/género
+
+        DB::commit();
+        return redirect()
+            ->route('estudiantes.index')
+            ->with('success', 'Estudiante actualizado correctamente.');
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error($e->getMessage());
+        return redirect()
+            ->back()
+            ->withInput()
+            ->with('error', 'Error al actualizar: ' . $e->getMessage());
     }
+}
 
     /**
      * Desactivar estudiante (cambio de estado). Solo cierra historial y reordena.
