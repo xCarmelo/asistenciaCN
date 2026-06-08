@@ -84,3 +84,12 @@ Route::resource('maestros', MaestroController::class);
 Route::resource('secciones', SeccionController::class);
 
 Route::delete('/maestros/asistencias/eliminar/{fecha}', [App\Http\Controllers\MaestroAsistenciaController::class, 'destroyByDate'])->name('maestros.asistencias.destroyByDate');
+
+Route::post('/estudiantes/bulk-update', [EstudianteController::class, 'bulkUpdate'])->name('estudiantes.bulkUpdate');
+
+
+
+
+
+
+

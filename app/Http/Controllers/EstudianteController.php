@@ -15,50 +15,225 @@ use Carbon\Carbon;
 
 class EstudianteController extends Controller
 {
-     public function index(Request $request)
-    {
-        // Subconsulta para obtener el ID del último historial de cada estudiante
-        $subquery = HistorialEstudiante::select('estudiante_id', DB::raw('MAX(id) as ultimo_id'))
-            ->groupBy('estudiante_id');
+public function index(Request $request)
+{
+    // Subconsulta para obtener el ID del último historial de cada estudiante
+    $subquery = HistorialEstudiante::select('estudiante_id', DB::raw('MAX(id) as ultimo_id'))
+        ->groupBy('estudiante_id');
 
-        if ($request->filled('nombre')) {
-            $subquery->whereHas('estudiante', fn($q) => $q->where('name', 'like', '%' . $request->nombre . '%'));
-        }
-        if ($request->filled('seccion_id')) {
-            $subquery->where('seccion_id', $request->seccion_id);
-        }
-
-        $subquerySql = $subquery->toSql();
-        $bindings = $subquery->getBindings();
-
-        $query = HistorialEstudiante::with(['estudiante', 'seccion', 'estado'])
-            ->join(DB::raw("({$subquerySql}) as ultimos"), function($join) {
-                $join->on('historial_estudiantes.id', '=', 'ultimos.ultimo_id');
-            })
-            ->setBindings($bindings, 'join');
-
-        if ($request->filled('estado')) {
-            $query->where('historial_estudiantes.estado_id', $request->estado);
-        } else {
-            // Sin filtro: solo activos (fecha_fin NULL y estado permite asistencia)
-            $query->whereNull('historial_estudiantes.fecha_fin')
-                  ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true));
-        }
-
-        $historiales = $query
-            ->join('secciones', 'historial_estudiantes.seccion_id', '=', 'secciones.id')
-            ->select('historial_estudiantes.*')
-            ->orderBy('secciones.nombre', 'asc')
-            ->orderBy('historial_estudiantes.numero_lista', 'asc')
-            ->orderBy('historial_estudiantes.id', 'asc')
-            ->paginate(15);
-
-        $secciones = Seccion::orderBy('nombre')->get();
-        $estados = Estado::all();
-
-        return view('estudiantes.index', compact('historiales', 'secciones', 'estados'));
+    if ($request->filled('nombre')) {
+        $subquery->whereHas('estudiante', fn($q) => $q->where('name', 'like', '%' . $request->nombre . '%'));
+    }
+    if ($request->filled('seccion_id')) {
+        $subquery->where('seccion_id', $request->seccion_id);
     }
 
+    $subquerySql = $subquery->toSql();
+    $bindings = $subquery->getBindings();
+
+    $query = HistorialEstudiante::with(['estudiante', 'seccion', 'estado'])
+        ->join(DB::raw("({$subquerySql}) as ultimos"), function($join) {
+            $join->on('historial_estudiantes.id', '=', 'ultimos.ultimo_id');
+        })
+        ->setBindings($bindings, 'join');
+
+    if ($request->filled('estado')) {
+        $query->where('historial_estudiantes.estado_id', $request->estado);
+    } else {
+        // Sin filtro: solo activos (fecha_fin NULL y estado permite asistencia)
+        $query->whereNull('historial_estudiantes.fecha_fin')
+              ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true));
+    }
+
+    // Obtener el número de registros por página (por defecto 15)
+    $perPage = (int) $request->input('per_page', 15);
+    $perPage = in_array($perPage, [15, 25, 50, 100]) ? $perPage : 15;
+
+    $historiales = $query
+        ->join('secciones', 'historial_estudiantes.seccion_id', '=', 'secciones.id')
+        ->select('historial_estudiantes.*')
+        ->orderBy('secciones.nombre', 'asc')
+        ->orderBy('historial_estudiantes.numero_lista', 'asc')
+        ->orderBy('historial_estudiantes.id', 'asc')
+        ->paginate($perPage);
+
+    $secciones = Seccion::orderBy('nombre')->get();
+    $estados = Estado::all();
+
+    return view('estudiantes.index', compact('historiales', 'secciones', 'estados'));
+}
+
+/**
+ * Actualización masiva de estudiantes (cambio de sección o estado)
+ */
+public function bulkUpdate(Request $request)
+{
+    $estudiantes = $request->estudiantes;
+    if (is_string($estudiantes)) {
+        $estudiantes = json_decode($estudiantes, true);
+        $request->merge(['estudiantes' => $estudiantes]);
+    }
+
+    $request->validate([
+        'action'       => 'required|in:seccion,estado',
+        'estudiantes'  => 'required|array|min:1',
+        'estudiantes.*' => 'exists:estudiantes,id',
+    ]);
+
+    if ($request->action == 'seccion') {
+        $request->validate(['seccion_id' => 'required|exists:secciones,id']);
+        $nuevaSeccionGlobal = $request->seccion_id;
+        $nuevoEstadoGlobal = null;
+    } else {
+        $request->validate(['estado_id' => 'required|exists:estados,id']);
+        $nuevoEstadoGlobal = $request->estado_id;
+        $nuevaSeccionGlobal = null;
+    }
+
+    $estudianteIds = $request->estudiantes;
+    $action = $request->action;
+    $procesados = 0;
+    $seccionesReconstruir = collect();
+
+    DB::beginTransaction();
+    try {
+        // Clasificar estudiantes: reactivaciones (inactivo -> activo) vs otros
+        $reactivacionesPorSeccion = []; // [seccion_id => [['estudiante_id', 'numero_deseado']]]
+        $otrosProcesos = [];
+
+        foreach ($estudianteIds as $estudianteId) {
+            $estudiante = Estudiante::findOrFail($estudianteId);
+
+            $historialActivo = HistorialEstudiante::where('estudiante_id', $estudianteId)
+                ->whereNull('fecha_fin')
+                ->first();
+
+            if (!$historialActivo) {
+                $ultimo = HistorialEstudiante::where('estudiante_id', $estudianteId)
+                    ->orderBy('id', 'desc')
+                    ->first();
+                if (!$ultimo) continue;
+
+                $seccionActual = $ultimo->seccion_id;
+                $estadoActual  = $ultimo->estado_id;
+                $numeroActual  = $ultimo->numero_lista;
+                $cerrar = false;
+            } else {
+                $seccionActual = $historialActivo->seccion_id;
+                $estadoActual  = $historialActivo->estado_id;
+                $numeroActual  = $historialActivo->numero_lista;
+                $cerrar = true;
+            }
+
+            $nuevaSeccion = ($action == 'seccion') ? $nuevaSeccionGlobal : $seccionActual;
+            $nuevoEstado  = ($action == 'estado') ? $nuevoEstadoGlobal : $estadoActual;
+
+            if ($seccionActual == $nuevaSeccion && $estadoActual == $nuevoEstado) continue;
+            if ($action == 'estado' && $estadoActual == $nuevoEstado) continue;
+            if ($action == 'seccion' && $seccionActual == $nuevaSeccion) continue;
+
+            $nuevoEstadoObj = Estado::find($nuevoEstado);
+            $esReactivacion = (!$cerrar && $nuevoEstadoObj && $nuevoEstadoObj->permite_asistencia);
+
+            if ($esReactivacion) {
+                $reactivacionesPorSeccion[$nuevaSeccion][] = [
+                    'estudiante_id' => $estudiante->id,
+                    'numero_deseado' => $numeroActual,
+                ];
+            } else {
+                $otrosProcesos[] = [
+                    'estudiante_id' => $estudiante->id,
+                    'historial_activo' => $historialActivo,
+                    'seccion_actual' => $seccionActual,
+                    'estado_actual' => $estadoActual,
+                    'numero_actual' => $numeroActual,
+                    'cerrar' => $cerrar,
+                    'nueva_seccion' => $nuevaSeccion,
+                    'nuevo_estado' => $nuevoEstado,
+                ];
+            }
+        }
+
+        // Procesar cambios de sección o cambios a estado no activo
+        foreach ($otrosProcesos as $proc) {
+            if ($proc['cerrar']) {
+                $proc['historial_activo']->fecha_fin = Carbon::now()->toDateString();
+                $proc['historial_activo']->save();
+                if (Estado::find($proc['estado_actual'])->permite_asistencia) {
+                    $seccionesReconstruir->push($proc['seccion_actual']);
+                }
+            }
+
+            $nuevoEstadoObj = Estado::find($proc['nuevo_estado']);
+            if ($nuevoEstadoObj && $nuevoEstadoObj->permite_asistencia) {
+                $this->shiftNumbersForInsert($proc['nueva_seccion'], $proc['numero_actual'], null);
+                $seccionesReconstruir->push($proc['nueva_seccion']);
+            } elseif ($action == 'seccion') {
+                $seccionesReconstruir->push($proc['nueva_seccion']);
+            }
+
+            HistorialEstudiante::create([
+                'estudiante_id' => $proc['estudiante_id'],
+                'seccion_id'    => $proc['nueva_seccion'],
+                'estado_id'     => $proc['nuevo_estado'],
+                'numero_lista'  => $proc['numero_actual'],
+                'fecha_inicio'  => Carbon::now()->toDateString(),
+                'fecha_fin'     => null,
+            ]);
+            $procesados++;
+        }
+
+        // Procesar reactivaciones: orden descendente por número deseado
+        foreach ($reactivacionesPorSeccion as $seccionId => $reactivos) {
+            // Ordenar de mayor a menor
+            usort($reactivos, fn($a, $b) => $b['numero_deseado'] <=> $a['numero_deseado']);
+
+            foreach ($reactivos as $r) {
+                $num = $r['numero_deseado'];
+                // Desplazar números existentes >= num
+                HistorialEstudiante::where('seccion_id', $seccionId)
+                    ->whereNull('fecha_fin')
+                    ->whereHas('estado', fn($q) => $q->where('permite_asistencia', true))
+                    ->where('numero_lista', '>=', $num)
+                    ->increment('numero_lista');
+
+                HistorialEstudiante::create([
+                    'estudiante_id' => $r['estudiante_id'],
+                    'seccion_id'    => $seccionId,
+                    'estado_id'     => $nuevoEstadoGlobal,
+                    'numero_lista'  => $num,
+                    'fecha_inicio'  => Carbon::now()->toDateString(),
+                    'fecha_fin'     => null,
+                ]);
+                $procesados++;
+            }
+            // No reconstruir la sección destino para mantener los números originales
+        }
+
+        // Reconstruir secciones afectadas por otros procesos
+        foreach ($seccionesReconstruir->unique() as $seccionId) {
+            $this->rebuildListNumbers($seccionId);
+        }
+
+        DB::commit();
+
+        if ($procesados == 0) {
+            return redirect()->route('estudiantes.index')
+                ->with('info', 'No se realizaron cambios porque los estudiantes ya estaban en el estado/sección seleccionado.');
+        }
+
+        $message = $action == 'seccion'
+            ? "Se cambiaron $procesados estudiante(s) de sección correctamente."
+            : "Se cambiaron $procesados estudiante(s) de estado correctamente.";
+
+        return redirect()->route('estudiantes.index', ['clear_selection' => 1])
+            ->with('success', $message);
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error('Error en actualización masiva: ' . $e->getMessage());
+        return redirect()->back()->with('error', 'Error al procesar la operación masiva: ' . $e->getMessage());
+    }
+}
     public function create()
     {
         $secciones = Seccion::orderBy('nombre')->get();
@@ -137,7 +312,7 @@ class EstudianteController extends Controller
     /**
      * Actualizar estudiante (nombre, género, número o sección).
      */
-    public function update(Request $request, $id)
+public function update(Request $request, $id)
 {
     $request->validate([
         'name'         => 'required|string|max:100',
@@ -167,30 +342,47 @@ class EstudianteController extends Controller
         }
 
         $seccionActual = $historialActivo->seccion_id;
-        $nuevaSeccion = (int) $request->id_seccion;
-        $nuevoNumero  = (int) $request->numero_lista;
+        $numeroActual  = $historialActivo->numero_lista;
+        $nuevaSeccion  = (int) $request->id_seccion;
+        $nuevoNumero   = (int) $request->numero_lista;
 
-        // CASO 1: Cambio de sección
-        if ($seccionActual != $nuevaSeccion) {
-            $historialActivo->update(['fecha_fin' => now()->toDateString()]);
-            $this->rebuildListNumbers($seccionActual);
-            $this->shiftNumbersForInsert($nuevaSeccion, $nuevoNumero, null);
+        // Si cambia de sección o cambia el número, se cierra el historial actual y se crea uno nuevo
+        if ($seccionActual != $nuevaSeccion || $numeroActual != $nuevoNumero) {
+            // Cerrar historial actual
+            $historialActivo->fecha_fin = now()->toDateString();
+            $historialActivo->save();
+
+            // Reordenar la sección antigua (solo si el estado actual permitía asistencia)
+            $estadoActualObj = Estado::find($historialActivo->estado_id);
+            if ($estadoActualObj && $estadoActualObj->permite_asistencia) {
+                $this->rebuildListNumbers($seccionActual);
+            }
+
+            // Determinar la nueva sección y nuevo número
+            $nuevaSeccionDestino = ($seccionActual != $nuevaSeccion) ? $nuevaSeccion : $seccionActual;
+            $nuevoNumeroDestino = $nuevoNumero;
+
+            // Si se cambia de sección, hacer espacio en la nueva sección
+            if ($seccionActual != $nuevaSeccion) {
+                $this->shiftNumbersForInsert($nuevaSeccionDestino, $nuevoNumeroDestino, null);
+            } else {
+                // Misma sección: hacer espacio excluyendo al estudiante actual (que ya no tiene historial activo)
+                $this->shiftNumbersForInsert($seccionActual, $nuevoNumeroDestino, null);
+            }
+
+            // Crear nuevo historial
             HistorialEstudiante::create([
                 'estudiante_id' => $estudiante->id,
-                'seccion_id'    => $nuevaSeccion,
+                'seccion_id'    => $nuevaSeccionDestino,
                 'estado_id'     => $historialActivo->estado_id,
-                'numero_lista'  => $nuevoNumero,
+                'numero_lista'  => $nuevoNumeroDestino,
                 'fecha_inicio'  => now()->toDateString(),
                 'fecha_fin'     => null,
             ]);
+
+            // Reordenar la nueva sección (para asegurar secuencia 1,2,3...)
+            $this->rebuildListNumbers($nuevaSeccionDestino);
         }
-        // CASO 2: Misma sección, cambio de número
-        elseif ($historialActivo->numero_lista != $nuevoNumero) {
-            $this->shiftNumbersForInsert($seccionActual, $nuevoNumero, $historialActivo->id);
-            $historialActivo->update(['numero_lista' => $nuevoNumero]);
-            $this->rebuildListNumbers($seccionActual);  // ← LÍNEA CLAVE
-        }
-        // CASO 3: Misma sección, mismo número → solo nombre/género
 
         DB::commit();
         return redirect()
